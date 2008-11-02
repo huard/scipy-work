@@ -25,29 +25,27 @@ from flinalg import get_flinalg_funcs
 from scipy.linalg import calc_lwork
 import numpy
 from numpy import array, asarray_chkfinite, asarray, diag, zeros, ones, \
-        single, isfinite, inexact, complexfloating, nonzero, iscomplexobj
+        single, isfinite, inexact, complexfloating, flatnonzero, conj, \
+        nonzero, iscomplexobj
 
 cast = numpy.cast
 r_ = numpy.r_
 
 _I = cast['F'](1j)
 def _make_complex_eigvecs(w,vin,cmplx_tcode):
-    v = numpy.array(vin,dtype=cmplx_tcode)
-    #ind = numpy.flatnonzero(numpy.not_equal(w.imag,0.0))
-    ind = numpy.flatnonzero(numpy.logical_and(numpy.not_equal(w.imag,0.0),
-                            numpy.isfinite(w)))
-    vnew = numpy.zeros((v.shape[0],len(ind)>>1),cmplx_tcode)
-    vnew.real = numpy.take(vin,ind[::2],1)
-    vnew.imag = numpy.take(vin,ind[1::2],1)
-    count = 0
-    conj = numpy.conjugate
-    for i in range(len(ind)/2):
-        v[:,ind[2*i]] = vnew[:,count]
-        v[:,ind[2*i+1]] = conj(vnew[:,count])
-        count += 1
+    # - see LAPACK man page DGGEV at ALPHAI
+    # - see also Ticket #709
+    v = numpy.array(vin, dtype=cmplx_tcode)
+    for i in flatnonzero(w.imag < 0):
+        # this loop is a partial workaround for Ticket #709
+        if i == 0 or w[i-1].imag > 0: continue
+        v.real[:,i] =  vin[:,i-1]
+        v.imag[:,i] = -vin[:,i]
+    for i in flatnonzero(w.imag > 0):
+        v.real[:,i] = vin[:,i]
+        v.imag[:,i] = vin[:,i+1]
+        conj(v[:,i], v[:,i+1])
     return v
-
-
 
 def _datanotshared(a1,a):
     if a1 is a:
