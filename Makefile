@@ -1,5 +1,5 @@
 
-REVISION="$(shell svnversion ../trunk).$(shell hg id -i|cut -d' ' -f1|sed -e 's/+/x/g')"
+REVISION="$(shell git svn log|head -n2|tail -n1|perl -n -e 'print $$1 if /^r(\d+)/;').$(shell git log|head -n1|awk '{print $$2}')"
 
 all: build test
 
