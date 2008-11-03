@@ -14,7 +14,7 @@ TEST_STANZA='import sys, os; sys.path.insert(0, os.path.join(os.getcwd(), "site-
 build-linux:
 	@echo "version = \"$(REVISION)\"" > scipy/__svn_version__.py
 	@echo "--- Building..."
-	python2.5 setup.py install --prefix=dist/linux \
+	python2.5 setup.py build --debug install --prefix=dist/linux \
 		> build.log 2>&1 || { cat build.log; exit 1; }
 
 test-linux:
@@ -24,7 +24,7 @@ test-linux:
 
 build-wine:
 	@echo "--- Building..."
-	wine c:\\Python25\\python.exe setup.py build --compiler=mingw32 install --prefix="dist\\win32" \
+	wine c:\\Python25\\python.exe setup.py build --debug --compiler=mingw32 install --prefix="dist\\win32" \
 		> build.log 2>&1 || { cat build.log; exit 1; }
 
 test-wine:
