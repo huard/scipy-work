@@ -31,8 +31,7 @@ F.KNOWN_BAD = [nonlin.anderson2]
 def F2(x):
     return x
 F2.xin = [1,2,3,4,5,6]
-F2.KNOWN_BAD = [nonlin.broyden_modified, nonlin.broyden_generalized,
-                nonlin.anderson2, nonlin.linearmixing, nonlin.excitingmixing]
+F2.KNOWN_BAD = [nonlin.anderson2, nonlin.linearmixing, nonlin.excitingmixing]
 
 def F3(x):
     A = np.mat('1 2 3; 4 5 6; 7 8 9')
@@ -40,8 +39,8 @@ def F3(x):
     return np.dot(A, x) - b
 F3.xin = [1,2,3]
 F3.KNOWN_BAD = [nonlin.broyden_modified, nonlin.broyden_generalized,
-                nonlin.anderson, nonlin.anderson2,
-                nonlin.excitingmixing, nonlin.vackar, nonlin.linearmixing]
+                nonlin.anderson, nonlin.anderson2, nonlin.vackar,
+                nonlin.linearmixing, nonlin.excitingmixing]
 
 class TestNonlin(object):
     """
@@ -114,6 +113,9 @@ class TestNonlinOldTests(TestCase):
         x= nonlin.broyden_generalized(F,F.xin,iter=61,alpha=0.1,M=1)
         assert nonlin.norm(x)<2e-4
         assert nonlin.norm(F(x))<2e-4
+        x= nonlin.broyden_generalized(F,F.xin,iter=61,alpha=0.1,M=2)
+        assert nonlin.norm(x)<5e-4
+        assert nonlin.norm(F(x))<5e-4
 
     def xtest_broydenmodified(self):
         x= nonlin.broyden_modified(F,F.xin,iter=12,alpha=1)

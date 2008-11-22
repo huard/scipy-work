@@ -48,32 +48,90 @@ A collection of general-purpose nonlinear multidimensional solvers.
    anderson2           --  the Anderson method, the same as anderson, but
                            formulated differently
 
-The broyden2 is the best. For large systems, use broyden3. excitingmixing is
-also very effective. There are some more solvers implemented (see their
-docstrings), however, those are of mediocre quality.
-
 """
 
 import math
 import numpy as np
 from numpy.linalg import norm, solve
-from numpy import asarray
+from numpy import asarray, dot
 
 #------------------------------------------------------------------------------
 # Utility functions
 #------------------------------------------------------------------------------
 
-def a_F(F,xm):
-    return asarray(F(asarray(xm).ravel())).ravel()
-
-def m_F(F,xm):
-    return np.asmatrix(a_F(F, xm)).T
+class NoConvergence(Exception):
+    pass
 
 def maxnorm(x):
     return np.absolute(x).max()
 
-class NoConvergence(Exception):
-    pass
+def _as_inexact(x):
+    """Return `x` as an array, of either floats or complex floats"""
+    x = asarray(x)
+    if not isinstance(x.dtype.type, np.inexact):
+        return asarray(x, dtype=np.float_)
+    return x
+
+def _array_like(x, x0):
+    """Return ndarray `x` as same array subclass and shape as `x0`"""
+    x.shape = np.shape(x0)
+    wrap = getattr(x0, '__array_wrap__', x.__array_wrap__)
+    return wrap(x)
+
+#------------------------------------------------------------------------------
+# Generic nonlinear solver machinery
+#------------------------------------------------------------------------------
+
+def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
+                 maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
+                 tol_norm=None):
+    """
+    Find a root for a nonlinear function, using a given Jacobian approximation.
+
+    The Jacobian approximation is updated on every iteration, so e.g.
+    Quasi-Newton methods are accommodated.
+
+    """
+    condition = TerminationCondition(f_tol=f_tol, f_rtol=f_rtol,
+                                     x_tol=x_tol, x_rtol=x_rtol,
+                                     iter=iter, norm=tol_norm)
+
+    func = lambda x: _as_inexact(F(x)).flatten()
+    x = _as_inexact(x0).flatten()
+
+    dx = np.inf
+    Fx = func(x)
+    jacobian = jacobian_factory(x.copy(), Fx)
+
+    if maxiter is None:
+        if iter is not None:
+            maxiter = iter + 1
+        else:
+            maxiter = 100*(x.size+1)
+
+    for n in xrange(maxiter):
+        if condition.check(Fx, x, dx):
+            break
+
+        dx = jacobian.get_step()
+        x += dx
+        Fx = func(x)
+        jacobian.update(x.copy(), Fx)
+
+        if verbose or True:
+            print "%d:  |F(x)|=%g" % (n, norm(Fx))
+    else:
+        raise NoConvergence(_array_like(x, x0))
+
+    return _array_like(x, x0)
+
+class Jacobian(object):
+    def __init__(self, x0, f0, **kw):
+        raise NotImplementedError
+    def get_step(self):
+        raise NotImplementedError
+    def update(self, x, F):
+        raise NotImplementedError
 
 class TerminationCondition(object):
     """
@@ -88,10 +146,18 @@ class TerminationCondition(object):
     - |dx| < x_tol
 
     """
-    def __init__(self, f_tol=None, f_rtol=np.inf, x_tol=np.inf, x_rtol=np.inf,
+    def __init__(self, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
                  iter=None, norm=maxnorm):
-        if f_tol is None and iter is None:
-            f_tol = 1e-6
+
+        if f_tol is None:
+            f_tol = np.finfo(np.float_).eps ** (1./3)
+        if f_rtol is None:
+            f_rtol = np.inf
+        if x_tol is None:
+            x_tol = np.inf
+        if x_rtol is None:
+            x_rtol = np.inf
+        
         self.x_tol = x_tol
         self.x_rtol = x_rtol
         self.f_tol = f_tol
@@ -111,258 +177,141 @@ class TerminationCondition(object):
 
         if self.f0_norm is None:
             self.f0_norm = f_norm
-            if f_norm == 0:
-                return True
-
-        if self.iter is not None and self.iteration > self.iter:
-            # backwards compatibility with Scipy 0.6.0
+            
+        if f_norm == 0:
             return True
 
-        # NB: condition must succeed for x_rtol=infty even if x_norm == 0
+        if self.iter is not None:
+            # backwards compatibility with Scipy 0.6.0
+            return self.iteration > self.iter
+
+        # NB: condition must succeed for rtol=inf even if norm == 0
         return ((f_norm <= self.f_tol and f_norm/self.f_rtol <= self.f0_norm)
                 and (dx_norm <= self.x_tol and dx_norm/self.x_rtol <= x_norm))
 
-def _default_maxiter(maxiter, iter, xm):
-    """Sensible default number of maximum iterations, depending on input"""
-    if maxiter is not None:
-        return maxiter
-    elif iter is not None:
-        return iter + 1
-    else:
-        return 100*(xm.size + 1)
-
-def _as_inexact(x):
-    """Return `x` as an array, of either floats or complex floats"""
-    x = asarray(x)
-    if not isinstance(x.dtype.type, np.inexact):
-        return asarray(x, dtype=np.float_)
-    return x
-
 #------------------------------------------------------------------------------
-# (Full) Broyden variants
+# Full Broyden variants
 #------------------------------------------------------------------------------
 
-def broyden1(F, xin, iter=None, alpha=0.1, verbose = False, maxiter=None,
-             **kw):
-    """Broyden's first method.
+class GenericBroyden(Jacobian):
+    def __init__(self, x0, f0):
+        self.last_f = f0
+        self.last_x = x0
 
-    Updates Jacobian and computes inv(J) by a matrix inversion at every
-    iteration. It's very slow.
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        raise NotImplementedError
 
-    """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=np.asmatrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-    Jm=-1/alpha*np.asmatrix(np.identity(len(xm)))
-    deltaxm = np.inf
+    def update(self, x, f):
+        df = f - self.last_f
+        dx = x - self.last_x
+        self._update(x, f, dx, df, norm(dx), norm(df))
+        self.last_f = f
+        self.last_x = x
 
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=solve(-Jm,Fxm)
-        xm=xm+deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
-        Jm=Jm+(deltaFxm-Jm*deltaxm)*deltaxm.T/norm(deltaxm)**2
-        if verbose:
-            print "%d:  |F(x)|=%g"%(n, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+class GoodBroyden(GenericBroyden):
+    """The 'Good' Broyden method; updating the Jacobian"""
+    def __init__(self, x0, f0, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0)
+        self.Jm = (-1./alpha) * np.identity(x0.size)
 
-def broyden2(F, xin, iter=None, alpha=0.4, verbose=False,
-             maxiter=None, **kw):
-    """Broyden's second method.
+    def get_step(self):
+        return -solve(self.Jm, self.last_f)
 
-    Updates inverse Jacobian by an optimal formula.
-    There is NxN matrix multiplication in every iteration.
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        self.Jm += (df - dot(self.Jm, dx))[:,None] * dx[None,:]/dx_norm**2
 
-    Recommended.
-    """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=np.asmatrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-    Gm=-alpha*np.asmatrix(np.identity(len(xm)))
-    deltaxm = np.inf
+class BadBroyden(GenericBroyden):
+    """The 'Bad' Broyden method; updating the Jacobian inverse"""
+    def __init__(self, x0, f0, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0)
+        self.Gm = -alpha * np.identity(x0.size)
 
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=-Gm*Fxm
-        xm=xm+deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
-        Gm=Gm+(deltaxm-Gm*deltaFxm)*deltaFxm.T/norm(deltaFxm)**2
-        if verbose:
-            print "%d:  |F(x)|=%g"%(condition.iteration, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+    def get_step(self):
+        return -dot(self.Gm, self.last_f)
 
-def broyden3(F, xin, iter=None, alpha=0.4, verbose=False,
-             maxiter=None, **kw):
-    """Broyden's second method.
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
 
-    Updates inverse Jacobian by an optimal formula.
-    The NxN matrix multiplication is avoided.
+class BadBroyden2(GenericBroyden):
+    """Updating inverse Jacobian, but not storing the explicit matrix"""
+    def __init__(self, x0, f0, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0)
+        self.zy = []
+        self.alpha = alpha
 
-    Recommended.
-    """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    zy=[]
-    def updateG(z,y):
-        "G:=G+z*y.T"
-        zy.append((z,y))
-    def Gmul(f):
-        "G=-alpha*1+z*y.T+z*y.T ..."
-        s=-alpha*f
-        for z,y in zy:
-            s=s+z*(y.T*f)
+    def _G_mul(self, f):
+        s = -self.alpha * f
+        for z, y in self.zy:
+            s += z * dot(y, f)
         return s
-    xm=np.asmatrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-#    Gm=-alpha*np.asmatrix(np.identity(len(xm)))
-    deltaxm = np.inf
-
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        #deltaxm=-Gm*Fxm
-        deltaxm=Gmul(-Fxm)
-        xm=xm+deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
-        #Gm=Gm+(deltaxm-Gm*deltaFxm)*deltaFxm.T/norm(deltaFxm)**2
-        updateG(deltaxm-Gmul(deltaFxm),deltaFxm/norm(deltaFxm)**2)
-        if verbose:
-            print "%d:  |F(x)|=%g"%(condition.iteration, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
-
-def broyden1_modified(F, xin, iter=None, alpha=0.1, verbose = False,
-                      maxiter=None, **kw):
-    """Broyden's first method, modified by O. Certik.
-
-    Updates inverse Jacobian using some matrix identities at every iteration,
-    its faster then newton_slow, but still not optimal.
-
-    """
-    condition = TerminationCondition(iter=iter, **kw)
     
-    def inv(A,u,v):
-        #interesting is that this
-        #return (A.I+u*v.T).I
-        #is more stable than
-        #return A-A*u*v.T*A/float(1+v.T*A*u)
-        Au=A*u
-        return A-Au*(v.T*A)/float(1+v.T*Au)
-    xm=np.asmatrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-    deltaxm = np.inf
-    Jm=alpha*np.asmatrix(np.identity(len(xm)))
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=Jm*Fxm
-        xm=xm+deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
-#        print "-------------",norm(deltaFxm),norm(deltaxm)
-        deltaFxm/=norm(deltaxm)
-        deltaxm/=norm(deltaxm)
-        Jm=inv(Jm+deltaxm*deltaxm.T*Jm,-deltaFxm,deltaxm)
+    def get_step(self):
+        return -self._G_mul(self.last_f)
 
-        if verbose:
-            print "%d:  |F(x)|=%g"%(n, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        z = dx - self._G_mul(df)
+        y = df / norm(df)**2
+        self.zy.append((z, y))
 
-def broyden_modified(F, xin, iter=None, alpha=0.35, w0=0.01, wl=5,
-                     verbose=False, maxiter=None, **kw):
-    """Modified Broyden's method.
+class BadBroydenModified(BadBroyden):
+    """Updates inverse Jacobian using some matrix identities at every iteration.
+    """
+    def _inv(self, A, u, v):
+        Au = dot(A, u)
+        return A - Au[:,None] * dot(v,A)[None,:]/(1. + dot(v, Au))
 
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        dx /= dx_norm
+        df /= dx_norm
+        self.Gm = self._inv(self.Gm + dx[:,None]*dot(dx,self.Gm)[None,:],df,dx)
+
+class BadBroydenModified2(GenericBroyden):
+    """
     Updates inverse Jacobian using information from all the iterations and
     avoiding the NxN matrix multiplication. The problem is with the weights,
     it converges the same or worse than broyden2 or broyden_generalized
-
-    .. warning::
-
-       The algorithm implemented in this routine is not suitable for
-       general root finding. It may be useful for specific problems,
-       but whether it will work may depend strongly on the problem.
-
     """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=np.matrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-    G0=alpha
-    w=[]
-    u=[]
-    dFxm=[]
-    deltaxm = np.inf
-    
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=G0*Fxm
-        M = len(w)
-        for i in range(M):
-            for j in range(M):
-                deltaxm-=w[i]*w[j]*betta[i,j]*u[j]*(dFxm[i].T*Fxm)
-        xm+=deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
+    def __init__(self, x0, f0, alpha=0.35, w0=0.01, wl=5):
+        GenericBroyden.__init__(self, x0, f0)
+        self.w = []
+        self.u = []
+        self.df = []
+        self.beta = None
+        self.alpha = alpha
+        self.wl = wl
+        self.w0 = w0
 
-        Fxm_norm = norm(Fxm)
-        deltaFxm_norm = norm(deltaFxm)
+    def get_step(self):
+        w, u, beta, f = self.w, self.u, self.beta, self.last_f
+        dx = self.alpha * f
+        M = len(self.w)
+        for i in xrange(M):
+            for j in xrange(M):
+                dx -= w[i]*w[j]*beta[i,j]*u[j]*dot(self.df[i], f)
+        return dx
 
-        if Fxm_norm == 0:
-            # converged
-            break
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        f_norm = norm(f)
 
-        if deltaFxm_norm == 0:
-            # XXX: what to do now?
-            pass
+        w, u = self.w, self.u
 
-        w.append(wl/Fxm_norm)
-        u.append((G0*deltaFxm+deltaxm)/deltaFxm_norm)
-        dFxm.append(deltaFxm/deltaFxm_norm)
-        M = len(w)
-        a=np.asmatrix(np.empty((M,M)))
-        for i in range(M):
-            for j in range(M):
-                a[i,j]=w[i]*w[j]*dFxm[j].T*dFxm[i]
-        betta=(w0**2*np.asmatrix(np.identity(M))+a).I
+        w.append(self.wl / f_norm)
+        u.append((self.alpha*df + dx) / df_norm)
+        self.df.append(df / df_norm)
 
-        if verbose:
-            print "%d:  |F(x)|=%g"%(n, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+        M = len(self.w)
+        a = np.empty((M, M))
+        for i in xrange(M):
+            for j in xrange(M):
+                a[i,j] =w[i]*w[j]*dot(self.df[j], self.df[i])
+        self.beta = np.linalg.inv(self.w0**2*np.identity(M) + a)
 
 #------------------------------------------------------------------------------
-# Other algorithms
+# Broyden-like (restricted memory)
 #------------------------------------------------------------------------------
 
-def broyden_generalized(F, xin, iter=None, alpha=0.1, M=5, verbose=False,
-                        maxiter=None, **kw):
-    """Generalized Broyden's method.
+class BroydenGeneralized(GenericBroyden):
+    """Generalized Broyden's method (variant of Anderson method).
 
     Computes an approximation to the inverse Jacobian from the last M
     interations. Avoids NxN matrix multiplication, it only has MxM matrix
@@ -381,51 +330,51 @@ def broyden_generalized(F, xin, iter=None, alpha=0.1, M=5, verbose=False,
        but whether it will work may depend strongly on the problem.
 
     """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=np.asmatrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-    G0=-alpha
-    dxm=[]
-    dFxm=[]
-    deltaxm=np.inf
-    
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=-G0*Fxm
-        if M>0:
-            MM=min(M,n)
-            for m in range(n-MM,n):
-                deltaxm=deltaxm-(float(gamma[m-(n-MM)])*dxm[m]-G0*dFxm[m])
-        xm=xm+deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
 
-        if M>0:
-            dxm.append(deltaxm)
-            dFxm.append(deltaFxm)
-            MM=min(M,n+1)
-            a=np.asmatrix(np.empty((MM,MM)))
-            for i in range(n+1-MM,n+1):
-                for j in range(n+1-MM,n+1):
-                    a[i-(n+1-MM),j-(n+1-MM)]=dFxm[i].T*dFxm[j]
+    def __init__(self, x0, f0, alpha=0.1, M=5):
+        GenericBroyden.__init__(self, x0, f0)
+        self.alpha = alpha
+        self.M = M
+        self.dx = []
+        self.df = []
+        self.gamma = None
 
-            dFF=np.asmatrix(np.empty(MM)).T
-            for k in range(n+1-MM,n+1):
-                dFF[k-(n+1-MM)]=dFxm[k].T*Fxm
-            gamma=a.I*dFF
+    def get_step(self):
+        f = self.last_f
+        dx = self.alpha*f
+        for m in xrange(len(self.dx)):
+            dx -= self.gamma[m]*self.dx[m] + self.alpha*self.df[m]
+        return dx
 
-        if verbose:
-            print "%d:  |F(x)|=%g"%(n, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        if self.M == 0:
+            return
+        
+        self.dx.append(dx)
+        self.df.append(df)
 
-def anderson(F, xin, iter=None, alpha=0.1, M=5, w0=0.01, verbose=False,
-             maxiter=None, **kw):
+        while len(self.dx) > self.M:
+            self.dx.pop(0)
+            self.df.pop(0)
+
+        n = len(self.dx)
+        a = self._form_a()
+        
+        dFF = np.empty(n)
+        for k in xrange(n):
+            dFF[k] = dot(self.df[k], f)
+
+        self.gamma = solve(a, dFF)
+
+    def _form_a(self):
+        n = len(self.dx)
+        a = np.empty((n, n))
+        for i in xrange(n):
+            for j in xrange(n):
+                a[i,j] = dot(self.df[i], self.df[j])
+        return a
+
+class Anderson(BroydenGeneralized):
     """Extended Anderson method.
 
     Computes an approximation to the inverse Jacobian from the last M
@@ -445,54 +394,24 @@ def anderson(F, xin, iter=None, alpha=0.1, M=5, w0=0.01, verbose=False,
        but whether it will work may depend strongly on the problem.
 
     """
-    condition = TerminationCondition(iter=iter, **kw)
     
-    xm=np.asmatrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-    dxm=[]
-    dFxm=[]
-    deltaxm = np.inf
+    def __init__(self, x0, f0, alpha=0.1, M=5, w0=0.01):
+        BroydenGeneralized.__init__(self, x0, f0, alpha, M)
+        self.w0 = w0
 
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
+    def _form_a(self):
+        n = len(self.dx)
+        a = np.empty((n, n))
+        for i in xrange(n):
+            for j in xrange(n):
+                if i == j:
+                    wd = self.w0**2
+                else:
+                    wd = 0
+                a[i,j] = (1+wd)*dot(self.df[i], self.df[j])
+        return a
 
-        deltaxm=alpha*Fxm
-        if M>0:
-            MM=min(M,n)
-            for m in range(n-MM,n):
-                deltaxm=deltaxm-(float(gamma[m-(n-MM)])*dxm[m]+alpha*dFxm[m])
-        xm=xm+deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
-        
-        if M>0:
-            dxm.append(deltaxm)
-            dFxm.append(deltaFxm)
-            MM=min(M,n+1)
-            a=np.asmatrix(np.empty((MM,MM)))
-            for i in range(n+1-MM,n+1):
-                for j in range(n+1-MM,n+1):
-                    if i==j: wd=w0**2
-                    else: wd=0
-                    a[i-(n+1-MM),j-(n+1-MM)]=(1+wd)*dFxm[i].T*dFxm[j]
-
-            dFF=np.asmatrix(np.empty(MM)).T
-            for k in range(n+1-MM,n+1):
-                dFF[k-(n+1-MM)]=dFxm[k].T*Fxm
-            gamma=solve(a,dFF)
-#            print gamma
-
-        if verbose:
-            print "%d:  |F(x)|=%g"%(n, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
-
-def anderson2(F, xin, iter=None, alpha=0.1, M=5, w0=0.01, verbose = False,
-              maxiter=None, **kw):
+class Anderson2(GenericBroyden):
     """Anderson method.
 
     M=0 .... linear mixing
@@ -508,52 +427,48 @@ def anderson2(F, xin, iter=None, alpha=0.1, M=5, w0=0.01, verbose = False,
        but whether it will work may depend strongly on the problem.
 
     """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=np.asmatrix(_as_inexact(xin)).T
-    Fxm=m_F(F,xm)
-    dFxm=[]
-    deltaxm = np.inf
-    
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=Fxm
-        if M>0:
-            MM=min(M,n)
-            for m in range(n-MM,n):
-                deltaxm=deltaxm+float(theta[m-(n-MM)])*(dFxm[m]-Fxm)
-        deltaxm=deltaxm*alpha
-        xm=xm+deltaxm
-        Fxm1=m_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
 
-        if M>0:
-            dFxm.append(Fxm-deltaFxm)
-            MM=min(M,n+1)
-            a=np.asmatrix(np.empty((MM,MM)))
-            for i in range(n+1-MM,n+1):
-                for j in range(n+1-MM,n+1):
-                    if i==j: wd=w0**2
-                    else: wd=0
-                    a[i-(n+1-MM),j-(n+1-MM)]= \
-                        (1+wd)*(Fxm-dFxm[i]).T*(Fxm-dFxm[j])
+    def __init__(self, x0, f0, alpha=0.1, M=5, w0=0.01):
+        GenericBroyden.__init__(self, x0, f0)
+        self.alpha = alpha
+        self.M = M
+        self.w0 = w0
+        self.df = []
 
-            dFF=np.asmatrix(np.empty(MM)).T
-            for k in range(n+1-MM,n+1):
-                dFF[k-(n+1-MM)]=(Fxm-dFxm[k]).T*Fxm
-            theta=solve(a,dFF)
-#            print gamma
+    def get_step(self):
+        dx = self.last_f.copy()
+        for m in xrange(len(self.df)):
+            dx += self.theta[m] * (self.df[m] - self.last_f)
+        dx *= self.alpha
+        return dx
 
-        if verbose:
-            print "%d:  |F(x)|=%g"%(n, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        self.df.append(f - df)
 
-def vackar(F, xin, iter=None, alpha=0.1, verbose = False, maxiter=None, **kw):
+        while len(self.df) > self.M:
+            self.df.pop(0)
+
+        n = len(self.df)
+        a = np.empty((n, n))
+        for i in xrange(n):
+            for j in xrange(n):
+                if i == j:
+                    wd = self.w0**2
+                else:
+                    wd = 0
+                a[i,j] = (1 + wd)*dot(f - self.df[i], f - self.df[j])
+
+        dFF = np.empty(n)
+        for k in xrange(n):
+            dFF[k] = dot(f - self.df[k], f)
+
+        self.theta = solve(a, dFF)
+
+#------------------------------------------------------------------------------
+# Simple iterations
+#------------------------------------------------------------------------------
+
+class Vackar(GenericBroyden):
     """J=diag(d1,d2,...,dN)
 
     .. warning::
@@ -563,31 +478,17 @@ def vackar(F, xin, iter=None, alpha=0.1, verbose = False, maxiter=None, **kw):
        but whether it will work may depend strongly on the problem.
 
     """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=_as_inexact(xin).ravel()
-    Fxm=a_F(F,xm)
-    deltaxm = np.inf
-    d=1/alpha*np.ones(xm.size)
+    def __init__(self, x0, f0, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0)
+        self.d = np.ones_like(x0)/alpha
 
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=1/d*Fxm
-        xm=xm+deltaxm
-        Fxm1=a_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
-        d=d-(deltaFxm+d*deltaxm)*deltaxm/norm(deltaxm)**2
-        if verbose:
-            print "%d:  |F(x)|=%g"%(n, norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+    def get_step(self):
+        return self.last_f / self.d
 
-def linearmixing(F,xin, iter=None, alpha=0.1, verbose=False,
-                 maxiter=None, **kw):
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        self.d -= (df + self.d*dx)*dx/dx_norm**2
+
+class LinearMixing(GenericBroyden):
     """J=-1/alpha
 
     .. warning::
@@ -597,28 +498,17 @@ def linearmixing(F,xin, iter=None, alpha=0.1, verbose=False,
        but whether it will work may depend strongly on the problem.
 
     """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=_as_inexact(xin).ravel()
-    Fxm=a_F(F,xm)
-    deltaxm = np.inf
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=alpha*Fxm
-        xm=xm+deltaxm
-        Fxm1=a_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        Fxm=Fxm1
-        if verbose:
-            print "%d: |F(x)|=%g" %(n,norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+    def __init__(self, x0, f0, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0)
+        self.alpha = alpha
 
-def excitingmixing(F, xin, iter=None, alpha=0.1, alphamax=1.0, verbose=False,
-                   maxiter=None, **kw):
+    def get_step(self):
+        return self.last_f*self.alpha
+
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        pass
+
+class ExcitingMixing(GenericBroyden):
     """J=-1/alpha
 
     .. warning::
@@ -628,30 +518,59 @@ def excitingmixing(F, xin, iter=None, alpha=0.1, alphamax=1.0, verbose=False,
        but whether it will work may depend strongly on the problem.
 
     """
-    condition = TerminationCondition(iter=iter, **kw)
-    
-    xm=np.array(xin)
-    beta=np.array([alpha]*xm.size)
-    Fxm=a_F(F,xm)
-    deltaxm = np.inf
-    maxiter = _default_maxiter(maxiter, iter, xm)
-    for n in xrange(maxiter):
-        if condition.check(Fxm, xm, deltaxm):
-            break
-        deltaxm=beta*Fxm
-        xm=xm+deltaxm
-        Fxm1=a_F(F,xm)
-        deltaFxm=Fxm1-Fxm
-        for i in range(len(xm)):
-            if Fxm1[i]*Fxm[i] > 0:
-                beta[i]=beta[i]+alpha
-                if beta[i] > alphamax:
-                    beta[i] = alphamax
-            else:
-                beta[i]=alpha
-        Fxm=Fxm1
-        if verbose:
-            print "%d: |F(x)|=%g" %(n,norm(Fxm))
-    else:
-        raise NoConvergence(asarray(xm).ravel())
-    return asarray(xm).ravel()
+    def __init__(self, x0, f0, alpha=0.1, alphamax=1.0):
+        GenericBroyden.__init__(self, x0, f0)
+        self.alpha = alpha
+        self.alphamax = alphamax
+        self.beta = alpha*np.ones_like(x0)
+
+    def get_step(self):
+        return self.last_f*self.beta
+
+    def _update(self, x, f, dx, df, dx_norm, df_norm):
+        incr = f*self.last_f > 0
+        self.beta[incr] += self.alpha
+        self.beta[~incr] = self.alpha
+        np.clip(self.beta, 0, self.alphamax, out=self.beta)
+
+#------------------------------------------------------------------------------
+# Wrapper functions
+#------------------------------------------------------------------------------
+
+def _broyden_wrapper(name, jac):
+    import inspect
+    args, varargs, varkw, defaults = inspect.getargspec(jac.__init__)
+    kwargs = dict(zip(args[-len(defaults):], defaults))
+    kw_str = ", ".join(["%s=%r" % (k, v) for k, v in kwargs.items()])
+    if kw_str:
+        kw_str = ", " + kw_str
+    kwkw_str = ", ".join(["%s=%s" % (k, k) for k, v in kwargs.items()])
+    if kwkw_str:
+        kwkw_str = ", " + kwkw_str
+
+    wrapper = ("def %s(F, xin, iter=None %s, verbose=False, maxiter=None, "
+               "f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, "
+               "tol_norm=None):\n"
+               "    jac = lambda x, f: %s(x, f %s)\n"
+               "    return nonlin_solve(F, xin, jac, iter, verbose, maxiter,\n"
+               "        f_tol, f_rtol, x_tol, x_rtol, tol_norm)")
+    wrapper = wrapper % (name, kw_str, jac.__name__, kwkw_str)
+    ns = {}
+    ns.update(globals())
+    exec wrapper in ns
+    func = ns[name]
+    func.__doc__ = jac.__doc__
+    return func
+
+broyden1 = _broyden_wrapper('broyden1', GoodBroyden)
+broyden2 = _broyden_wrapper('broyden2', BadBroyden)
+broyden3 = _broyden_wrapper('broyden3', BadBroyden2)
+broyden1_modified = _broyden_wrapper('broyden1_modified', BadBroydenModified)
+broyden_modified = _broyden_wrapper('broyden_modified', BadBroydenModified2)
+linearmixing = _broyden_wrapper('linearmixing', LinearMixing)
+vackar = _broyden_wrapper('vackar', Vackar)
+excitingmixing = _broyden_wrapper('excitingmixing', ExcitingMixing)
+broyden_generalized = _broyden_wrapper('broyden_generalized',
+                                       BroydenGeneralized)
+anderson = _broyden_wrapper('anderson', Anderson)
+anderson2 = _broyden_wrapper('anderson2', Anderson2)
