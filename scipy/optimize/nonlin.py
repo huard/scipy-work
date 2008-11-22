@@ -118,7 +118,7 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
         Fx = func(x)
         jacobian.update(x.copy(), Fx)
 
-        if verbose or True:
+        if verbose:
             print "%d:  |F(x)|=%g" % (n, norm(Fx))
     else:
         raise NoConvergence(_array_like(x, x0))
