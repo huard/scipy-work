@@ -84,7 +84,7 @@ def _array_like(x, x0):
 
 def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None):
+                 tol_norm=None, line_search=True):
     """
     Find a root for a nonlinear function, using a given Jacobian approximation.
 
@@ -113,7 +113,18 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
         if condition.check(Fx, x, dx):
             break
 
-        dx = jacobian.get_step()
+        if line_search:
+            # XXX: determine which of the jacobian approximations stay valid
+            #      when the step length is modified
+
+            # XXX: Ensuring descent direction would be useful here?
+            dx = -jacobian.solve(Fx)
+
+            # Line search for Wolfe conditions for an objective function
+            s = _line_search(func, x, dx)
+            dx *= s
+        else:
+            dx = -jacobian.solve(Fx)
         x += dx
         Fx = func(x)
         jacobian.update(x.copy(), Fx)
@@ -125,10 +136,79 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
 
     return _array_like(x, x0)
 
+import minpack2
+
+def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
+    """
+    Perform a line search at `x` to direction `dx` looking for a sufficient
+    decrease in the norm of ``F(x + s dx)``.
+
+    The resulting step length will aim toward satisfying the strong Wolfe
+    conditions for ``f(s) = ||F(x + s dx/||dx||_2)||_2``, ie.,
+
+    1. f(s)  < f(0) + c1 s f'(s)
+    2. |f'(s)| < c2 |f'(0)|
+
+    If no such `s` is found within `maxfev` function evaluations, the
+    `s` giving the minimum of `|f(s)|` is returned instead.
+
+    The gradient `f'(s)` is approximated by finite differencing, with
+    relative step size of `eps`.
+
+    """
+    
+    dx_norm = norm(dx)
+    dx = dx / dx_norm
+    if dx_norm == 0:
+        raise ValueError('Invalid search direction')
+
+    def func(s):
+        return norm(F(x + s*dx))
+
+    def grad(s, f0):
+        ds = (abs(s) + norm(x)) * eps
+        return (func(s + ds) - f0) / ds
+
+    xtol = 1e-2
+    stpmin = 1e-2 * dx_norm
+    stpmax = 50. * dx_norm
+    stp = dx_norm
+
+    f = func(0.)
+    g = grad(0., f)
+
+    isave = np.zeros(2, dtype=np.intc)
+    dsave = np.zeros(13, dtype=np.float_)
+    task = 'START'
+
+    best_stp = stp
+    best_stp_f = f
+
+    for k in xrange(maxfev//2):
+        stp, f, g, task = minpack2.dcsrch(stp, f, g, c1, c2, xtol, task,
+                                          stpmin, stpmax, isave, dsave)
+        if task[:2] == 'FG':
+            f = func(stp)
+            g = grad(stp, f)
+        else:
+            break
+        if f < best_stp_f:
+            best_stp = stp
+            best_stp_f = f
+    else:
+        stp = best_stp
+        task = 'WARNING'
+
+    if task[:5] == 'ERROR':
+        stp = best_stp
+
+    stp /= dx_norm
+    return stp
+
 class Jacobian(object):
     def __init__(self, x0, f0, **kw):
         raise NotImplementedError
-    def get_step(self):
+    def solve(self, rhs):
         raise NotImplementedError
     def update(self, x, F):
         raise NotImplementedError
@@ -190,7 +270,7 @@ class TerminationCondition(object):
                 and (dx_norm <= self.x_tol and dx_norm/self.x_rtol <= x_norm))
 
 #------------------------------------------------------------------------------
-# Full Broyden variants
+# Full Broyden / Quasi-Newton variants
 #------------------------------------------------------------------------------
 
 class GenericBroyden(Jacobian):
@@ -214,8 +294,8 @@ class GoodBroyden(GenericBroyden):
         GenericBroyden.__init__(self, x0, f0)
         self.Jm = (-1./alpha) * np.identity(x0.size)
 
-    def get_step(self):
-        return -solve(self.Jm, self.last_f)
+    def solve(self, f):
+        return solve(self.Jm, f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.Jm += (df - dot(self.Jm, dx))[:,None] * dx[None,:]/dx_norm**2
@@ -226,8 +306,8 @@ class BadBroyden(GenericBroyden):
         GenericBroyden.__init__(self, x0, f0)
         self.Gm = -alpha * np.identity(x0.size)
 
-    def get_step(self):
-        return -dot(self.Gm, self.last_f)
+    def solve(self, f):
+        return dot(self.Gm, f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
@@ -239,17 +319,14 @@ class BadBroyden2(GenericBroyden):
         self.zy = []
         self.alpha = alpha
 
-    def _G_mul(self, f):
+    def solve(self, f):
         s = -self.alpha * f
         for z, y in self.zy:
             s += z * dot(y, f)
         return s
-    
-    def get_step(self):
-        return -self._G_mul(self.last_f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
-        z = dx - self._G_mul(df)
+        z = dx - self.solve(df)
         y = df / norm(df)**2
         self.zy.append((z, y))
 
@@ -281,13 +358,13 @@ class BadBroydenModified2(GenericBroyden):
         self.wl = wl
         self.w0 = w0
 
-    def get_step(self):
-        w, u, beta, f = self.w, self.u, self.beta, self.last_f
-        dx = self.alpha * f
+    def solve(self, f):
+        w, u, beta = self.w, self.u, self.beta
+        dx = -self.alpha * f
         M = len(self.w)
         for i in xrange(M):
             for j in xrange(M):
-                dx -= w[i]*w[j]*beta[i,j]*u[j]*dot(self.df[i], f)
+                dx += w[i]*w[j]*beta[i,j]*u[j]*dot(self.df[i], f)
         return dx
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
@@ -339,11 +416,10 @@ class BroydenGeneralized(GenericBroyden):
         self.df = []
         self.gamma = None
 
-    def get_step(self):
-        f = self.last_f
-        dx = self.alpha*f
+    def solve(self, f):
+        dx = -self.alpha*f
         for m in xrange(len(self.dx)):
-            dx -= self.gamma[m]*self.dx[m] + self.alpha*self.df[m]
+            dx += self.gamma[m]*self.dx[m] + self.alpha*self.df[m]
         return dx
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
@@ -435,11 +511,11 @@ class Anderson2(GenericBroyden):
         self.w0 = w0
         self.df = []
 
-    def get_step(self):
-        dx = self.last_f.copy()
+    def solve(self, f):
+        dx = f.copy()
         for m in xrange(len(self.df)):
-            dx += self.theta[m] * (self.df[m] - self.last_f)
-        dx *= self.alpha
+            dx += self.theta[m] * (self.df[m] - f)
+        dx *= -self.alpha
         return dx
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
@@ -482,8 +558,8 @@ class Vackar(GenericBroyden):
         GenericBroyden.__init__(self, x0, f0)
         self.d = np.ones_like(x0)/alpha
 
-    def get_step(self):
-        return self.last_f / self.d
+    def solve(self, f):
+        return -f / self.d
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.d -= (df + self.d*dx)*dx/dx_norm**2
@@ -502,8 +578,8 @@ class LinearMixing(GenericBroyden):
         GenericBroyden.__init__(self, x0, f0)
         self.alpha = alpha
 
-    def get_step(self):
-        return self.last_f*self.alpha
+    def solve(self, f):
+        return -f*self.alpha
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         pass
@@ -524,8 +600,8 @@ class ExcitingMixing(GenericBroyden):
         self.alphamax = alphamax
         self.beta = alpha*np.ones_like(x0)
 
-    def get_step(self):
-        return self.last_f*self.beta
+    def solve(self, f):
+        return -f*self.beta
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         incr = f*self.last_f > 0
@@ -550,10 +626,10 @@ def _broyden_wrapper(name, jac):
 
     wrapper = ("def %s(F, xin, iter=None %s, verbose=False, maxiter=None, "
                "f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, "
-               "tol_norm=None):\n"
+               "tol_norm=None, line_search=True):\n"
                "    jac = lambda x, f: %s(x, f %s)\n"
                "    return nonlin_solve(F, xin, jac, iter, verbose, maxiter,\n"
-               "        f_tol, f_rtol, x_tol, x_rtol, tol_norm)")
+               "        f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search)")
     wrapper = wrapper % (name, kw_str, jac.__name__, kwkw_str)
     ns = {}
     ns.update(globals())
