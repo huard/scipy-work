@@ -55,6 +55,11 @@ import numpy as np
 from numpy.linalg import norm, solve
 from numpy import asarray, dot
 
+__all__ = ['broyden1', 'broyden2', 'broyden3',
+           'broyden1_modified', 'broyden_modified', 'linearmixing',
+           'vackar', 'excitingmixing', 'broyden_generalized',
+           'anderson', 'anderson2']
+
 #------------------------------------------------------------------------------
 # Utility functions
 #------------------------------------------------------------------------------
@@ -85,13 +90,41 @@ def _array_like(x, x0):
 def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
                  tol_norm=None, line_search=True):
-    """
-    Find a root for a nonlinear function, using a given Jacobian approximation.
+    """%s
+    Parameters
+    ----------
+    F : function(x) -> f
+        Function whose root to find; should take and return an array-like
+        object.
+    x0 : array-like
+        Initial guess for the solution%s
+    iter : int, optional
+        Number of iterations to make. If omitted (default), make as many
+        as required to meet tolerances.
+    verbose : bool, optional
+        Print status to stdout on every iteration.
+    maxiter : int, optional
+        Maximum number of iterations to make. If more are needed to
+        meet convergence, `NoConvergence` is raised.
+    f_tol : float, optional
+        Absolute tolerance (in max-norm) for the residual.
+        If omitted, default is 6e-6.
+    f_rtol : float, optional
+        Relative tolerance for the residual. If omitted, not used.
+    x_tol : float, optional
+        Absolute minimum step size, as determined from the Jacobian
+        approximation. If the step size is smaller than this, optimization
+        is terminated as successful. If omitted, not used.
+    x_rtol : float, optional
+        Relative minimum step size. If omitted, not used.
+    tol_norm : function(vector) -> scalar, optional
+        Norm to use in convergence check. Default is the maximum norm.
+    line_search : bool, optional
+        Whether to make a line search to determine the step size in the
+        direction given by the Jacobian approximation. Defaults to ``True``.
 
-    The Jacobian approximation is updated on every iteration, so e.g.
-    Quasi-Newton methods are accommodated.
-
     """
+
     condition = TerminationCondition(f_tol=f_tol, f_rtol=f_rtol,
                                      x_tol=x_tol, x_rtol=x_rtol,
                                      iter=iter, norm=tol_norm)
@@ -122,10 +155,11 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
 
             # Line search for Wolfe conditions for an objective function
             s = _line_search(func, x, dx)
-            dx *= s
+            step = dx*s
         else:
             dx = -jacobian.solve(Fx)
-        x += dx
+            step = dx
+        x += step
         Fx = func(x)
         jacobian.update(x.copy(), Fx)
 
@@ -146,7 +180,7 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     The resulting step length will aim toward satisfying the strong Wolfe
     conditions for ``f(s) = ||F(x + s dx/||dx||_2)||_2``, ie.,
 
-    1. f(s)  < f(0) + c1 s f'(s)
+    1. f(s)  < f(0) + c1 s f'(0)
     2. |f'(s)| < c2 |f'(0)|
 
     If no such `s` is found within `maxfev` function evaluations, the
@@ -289,7 +323,12 @@ class GenericBroyden(Jacobian):
         self.last_x = x
 
 class GoodBroyden(GenericBroyden):
-    """The 'Good' Broyden method; updating the Jacobian"""
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using 'Good' Broyden Jacobian approximation.
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).""")
+    
     def __init__(self, x0, f0, alpha=0.1):
         GenericBroyden.__init__(self, x0, f0)
         self.Jm = (-1./alpha) * np.identity(x0.size)
@@ -301,7 +340,12 @@ class GoodBroyden(GenericBroyden):
         self.Jm += (df - dot(self.Jm, dx))[:,None] * dx[None,:]/dx_norm**2
 
 class BadBroyden(GenericBroyden):
-    """The 'Bad' Broyden method; updating the Jacobian inverse"""
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).""")
+    
     def __init__(self, x0, f0, alpha=0.1):
         GenericBroyden.__init__(self, x0, f0)
         self.Gm = -alpha * np.identity(x0.size)
@@ -313,7 +357,14 @@ class BadBroyden(GenericBroyden):
         self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
 
 class BadBroyden2(GenericBroyden):
-    """Updating inverse Jacobian, but not storing the explicit matrix"""
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
+    
+    The inverse Jacobian matrix is stored implicitly in this method.
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).""")
+    
     def __init__(self, x0, f0, alpha=0.1):
         GenericBroyden.__init__(self, x0, f0)
         self.zy = []
@@ -331,8 +382,15 @@ class BadBroyden2(GenericBroyden):
         self.zy.append((z, y))
 
 class BadBroydenModified(BadBroyden):
-    """Updates inverse Jacobian using some matrix identities at every iteration.
-    """
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
+    
+    The inverse Jacobian matrix is updated using non-standard matrix
+    identities in this method.
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).""")
+    
     def _inv(self, A, u, v):
         Au = dot(A, u)
         return A - Au[:,None] * dot(v,A)[None,:]/(1. + dot(v, Au))
@@ -342,12 +400,23 @@ class BadBroydenModified(BadBroyden):
         df /= dx_norm
         self.Gm = self._inv(self.Gm + dx[:,None]*dot(dx,self.Gm)[None,:],df,dx)
 
+#------------------------------------------------------------------------------
+# Modified formulas; not necessarily Quasi-Newton any more
+#------------------------------------------------------------------------------
+
 class BadBroydenModified2(GenericBroyden):
-    """
-    Updates inverse Jacobian using information from all the iterations and
-    avoiding the NxN matrix multiplication. The problem is with the weights,
-    it converges the same or worse than broyden2 or broyden_generalized
-    """
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
+    
+    In this routine, the inverse Jacobian matrix is stored in in implicit form.
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).
+    w0 : float, optional
+        Tunable parameter in the update formula
+    wl : float, optionaö
+        Tunable parameter in the update formula""")
+
     def __init__(self, x0, f0, alpha=0.35, w0=0.01, wl=5):
         GenericBroyden.__init__(self, x0, f0)
         self.w = []
@@ -388,17 +457,12 @@ class BadBroydenModified2(GenericBroyden):
 #------------------------------------------------------------------------------
 
 class BroydenGeneralized(GenericBroyden):
-    """Generalized Broyden's method (variant of Anderson method).
-
-    Computes an approximation to the inverse Jacobian from the last M
-    interations. Avoids NxN matrix multiplication, it only has MxM matrix
-    multiplication and inversion.
-
-    M=0 .... linear mixing
-    M=1 .... Anderson mixing with 2 iterations
-    M=2 .... Anderson mixing with 3 iterations
-    etc.
-    optimal is M=5
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using a variant of Anderson mixing.
+    
+    The jacobian is formed by for a 'best' solution in the space
+    spanned by last `M` vectors. As a result, only a MxM matrix
+    inversion and MxN multiplication is required.
 
     .. warning::
 
@@ -406,7 +470,11 @@ class BroydenGeneralized(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).
+    M : float, optional
+        Number of previous vectors to retain. Defaults to 5.""")
 
     def __init__(self, x0, f0, alpha=0.1, M=5):
         GenericBroyden.__init__(self, x0, f0)
@@ -451,17 +519,12 @@ class BroydenGeneralized(GenericBroyden):
         return a
 
 class Anderson(BroydenGeneralized):
-    """Extended Anderson method.
-
-    Computes an approximation to the inverse Jacobian from the last M
-    interations. Avoids NxN matrix multiplication, it only has MxM matrix
-    multiplication and inversion.
-
-    M=0 .... linear mixing
-    M=1 .... Anderson mixing with 2 iterations
-    M=2 .... Anderson mixing with 3 iterations
-    etc.
-    optimal is M=5
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using extended Anderson mixing.
+    
+    It is formed by for a 'best' solution in the space spanned by last `M`
+    vectors. As a result, only a MxM matrix inversion and MxN multiplication
+    is required.
 
     .. warning::
 
@@ -469,7 +532,13 @@ class Anderson(BroydenGeneralized):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).
+    M : float, optional
+        Number of previous vectors to retain. Defaults to 5.
+    w0 : float, optional
+        Regularization parameter.""")
     
     def __init__(self, x0, f0, alpha=0.1, M=5, w0=0.01):
         BroydenGeneralized.__init__(self, x0, f0, alpha, M)
@@ -488,13 +557,12 @@ class Anderson(BroydenGeneralized):
         return a
 
 class Anderson2(GenericBroyden):
-    """Anderson method.
-
-    M=0 .... linear mixing
-    M=1 .... Anderson mixing with 2 iterations
-    M=2 .... Anderson mixing with 3 iterations
-    etc.
-    optimal is M=5
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using extended Anderson mixing (another form).
+    
+    It is formed by for a 'best' solution in the space spanned by last `M`
+    vectors. As a result, only a MxM matrix inversion and MxN multiplication
+    is required.
 
     .. warning::
 
@@ -502,7 +570,13 @@ class Anderson2(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).
+    M : float, optional
+        Number of previous vectors to retain. Defaults to 5.
+    w0 : float, optional
+        Regularization parameter.""")
 
     def __init__(self, x0, f0, alpha=0.1, M=5, w0=0.01):
         GenericBroyden.__init__(self, x0, f0)
@@ -545,7 +619,11 @@ class Anderson2(GenericBroyden):
 #------------------------------------------------------------------------------
 
 class Vackar(GenericBroyden):
-    """J=diag(d1,d2,...,dN)
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using diagonal Broyden Jacobian approximation.
+    
+    The Jacobian approximation is derived from previous iterations, by
+    retaining only the diagonal of Broyden matrices.
 
     .. warning::
 
@@ -553,7 +631,10 @@ class Vackar(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """
+    """, """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).""")
+
     def __init__(self, x0, f0, alpha=0.1):
         GenericBroyden.__init__(self, x0, f0)
         self.d = np.ones_like(x0)/alpha
@@ -565,7 +646,8 @@ class Vackar(GenericBroyden):
         self.d -= (df + self.d*dx)*dx/dx_norm**2
 
 class LinearMixing(GenericBroyden):
-    """J=-1/alpha
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using a scalar Jacobian approximation.
 
     .. warning::
 
@@ -573,7 +655,10 @@ class LinearMixing(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """
+    """, """
+    alpha : float, optional
+        The Jacobian approximation is (-1/alpha).""")
+
     def __init__(self, x0, f0, alpha=0.1):
         GenericBroyden.__init__(self, x0, f0)
         self.alpha = alpha
@@ -585,7 +670,10 @@ class LinearMixing(GenericBroyden):
         pass
 
 class ExcitingMixing(GenericBroyden):
-    """J=-1/alpha
+    __doc__ = nonlin_solve.__doc__ % ("""
+    Find a root of a function, using a tuned diagonal Jacobian approximation.
+
+    The Jacobian matrix is diagonal and is tuned on each iteration.
 
     .. warning::
 
@@ -593,7 +681,13 @@ class ExcitingMixing(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """
+    """, """
+    alpha : float, optional
+        Initial Jacobian approximation is (-1/alpha).
+    alphamax : float, optional
+        The entries of the diagonal Jacobian are kept in the range
+        ``[alpha, alphamax]``.""")
+
     def __init__(self, x0, f0, alpha=0.1, alphamax=1.0):
         GenericBroyden.__init__(self, x0, f0)
         self.alpha = alpha
