@@ -33,13 +33,11 @@ F2.xin = [1,2,3,4,5,6]
 F2.KNOWN_BAD = [nonlin.anderson2, nonlin.linearmixing, nonlin.excitingmixing]
 
 def F3(x):
-    A = np.mat('1 2 3; 4 5 6; 7 8 9')
+    A = np.mat('-2 1 0; 1 -2 1; 0 1 -2')
     b = np.mat('1 2 3')
     return np.dot(A, x) - b
 F3.xin = [1,2,3]
-F3.KNOWN_BAD = [nonlin.broyden_modified, nonlin.broyden_generalized,
-                nonlin.anderson, nonlin.anderson2, nonlin.vackar,
-                nonlin.linearmixing, nonlin.excitingmixing]
+F3.KNOWN_BAD = [nonlin.anderson2]
 
 def F4_powell(x):
     A = 1e4
