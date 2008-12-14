@@ -68,6 +68,24 @@ class TestNonlin(object):
                     continue
                 yield self._check_func, f, func
 
+class TestSecant(TestCase):
+    """Check that some Jacobian approximations satisfy the secant condition"""
+
+    x0 = np.array([1,2,3,4])
+    f0 = np.array([4,3,2,1])
+    x1 = np.array([2,2,2,1])
+    f1 = np.array([3,3,2,2])
+
+    def _check_jac(self, jac):
+        jac.update(self.x1, self.f1)
+        assert np.allclose(self.x1 - self.x0, jac.solve(self.f1 - self.f0))
+
+    def test_broyden1(self):
+        self._check_jac(nonlin.BroydenFirst(self.x0, self.f0))
+        
+    def test_broyden2(self):
+        self._check_jac(nonlin.BroydenSecond(self.x0, self.f0))
+
 class TestNonlinOldTests(TestCase):
     """ Test case for a simple constrained entropy maximization problem
     (the machine translation example of Berger et al in
