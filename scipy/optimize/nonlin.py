@@ -329,13 +329,15 @@ class BroydenFirst(GenericBroyden):
     
     def __init__(self, x0, f0, alpha=0.1):
         GenericBroyden.__init__(self, x0, f0)
-        self.Jm = (-1./alpha) * np.identity(x0.size)
+        self.Gm = -alpha * np.identity(x0.size)
 
     def solve(self, f):
-        return solve(self.Jm, f)
+        return dot(self.Gm, f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
-        self.Jm += (df - dot(self.Jm, dx))[:,None] * dx[None,:]/dx_norm**2
+        s = dot(self.Gm.T, dx)
+        y = dot(self.Gm, df)
+        self.Gm += (dx - y)[:,None] * s[None,:] / dot(dx, y)
 
 class BroydenSecond(GenericBroyden):
     __doc__ = nonlin_solve.__doc__ % ("""

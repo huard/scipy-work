@@ -6,7 +6,8 @@ May 2007
 from numpy.testing import *
 
 from scipy.optimize import nonlin
-from numpy import matrix, diag
+from numpy import matrix, diag, dot
+from numpy.linalg import inv
 import numpy as np
 
 BROYDEN = [nonlin.broyden1, nonlin.broyden2]
@@ -68,6 +69,7 @@ class TestNonlin(object):
                     continue
                 yield self._check_func, f, func
 
+
 class TestSecant(TestCase):
     """Check that some Jacobian approximations satisfy the secant condition"""
 
@@ -85,6 +87,18 @@ class TestSecant(TestCase):
         
     def test_broyden2(self):
         self._check_jac(nonlin.BroydenSecond(self.x0, self.f0))
+
+    def test_broyden1_sherman_morrison(self):
+        # Check that BroydenFirst is as expected for the 1st iteration
+        jac = nonlin.BroydenFirst(self.x0, self.f0, alpha=0.1)
+        jac.update(self.x1, self.f1)
+
+        df = self.f1 - self.f0
+        dx = self.x1 - self.x0
+        j0 = -1./0.1 * np.eye(4)
+        j0 += (df - dot(j0, dx))[:,None] * dx[None,:] / dot(dx, dx)
+
+        assert np.allclose(inv(j0), jac.Gm)
 
 class TestNonlinOldTests(TestCase):
     """ Test case for a simple constrained entropy maximization problem
