@@ -392,8 +392,18 @@ class Anderson(GenericBroyden):
 
     def solve(self, f):
         dx = -self.alpha*f
+
+        n = len(self.dx)
+        if n == 0:
+            return dx
+
+        df_f = np.empty(n)
+        for k in xrange(n):
+            df_f[k] = vdot(self.df[k], f)
+        gamma = solve(self.a, df_f)
+
         for m in xrange(len(self.dx)):
-            dx += self.gamma[m]*(self.dx[m] + self.alpha*self.df[m])
+            dx += gamma[m]*(self.dx[m] + self.alpha*self.df[m])
         return dx
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
@@ -419,12 +429,7 @@ class Anderson(GenericBroyden):
                 a[i,j] = (1+wd)*vdot(self.df[i], self.df[j])
 
         a += np.triu(a, 1).T.conj()
-
-        dFF = np.empty(n)
-        for k in xrange(n):
-            dFF[k] = vdot(self.df[k], f)
-
-        self.gamma = solve(a, dFF)
+        self.a = a
 
 #------------------------------------------------------------------------------
 # Simple iterations

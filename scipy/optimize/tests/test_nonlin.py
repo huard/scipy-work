@@ -73,32 +73,57 @@ class TestNonlin(object):
 class TestSecant(TestCase):
     """Check that some Jacobian approximations satisfy the secant condition"""
 
-    x0 = np.array([1,2,3,4])
-    f0 = np.array([4,3,2,1])
-    x1 = np.array([2,2,2,1])
-    f1 = np.array([3,3,2,2])
+    xs = [np.array([1,2,3,4,5]),
+          np.array([2,3,4,5,1]),
+          np.array([3,4,5,1,2]),
+          np.array([4,5,1,2,3]),
+          np.array([5,1,2,3,6]),]
+    fs = [x**2 - 1 for x in xs]
 
-    def _check_jac(self, jac):
-        jac.update(self.x1, self.f1)
-        assert np.allclose(self.x1 - self.x0, jac.solve(self.f1 - self.f0))
+    def _check_secant(self, jac_cls, npoints=1, **kw):
+        """
+        Check that the given Jacobian approximation satisfies secant
+        conditions for last `npoints` points.
+        """
+        jac = jac_cls(self.xs[0], self.fs[0], **kw)
+        for j, (x, f) in enumerate(zip(self.xs[1:], self.fs[1:])):
+            jac.update(x, f)
+
+            for k in xrange(min(npoints, j+1)):
+                dx = self.xs[j-k+1] - self.xs[j-k]
+                df = self.fs[j-k+1] - self.fs[j-k]
+                assert np.allclose(dx, jac.solve(df))
+
+            # Check that the `npoints` secant bound is strict
+            if j >= npoints:
+                dx = self.xs[j-npoints+1] - self.xs[j-npoints]
+                df = self.fs[j-npoints+1] - self.fs[j-npoints]
+                assert not np.allclose(dx, jac.solve(df))
 
     def test_broyden1(self):
-        self._check_jac(nonlin.BroydenFirst(self.x0, self.f0))
+        self._check_secant(nonlin.BroydenFirst)
         
     def test_broyden2(self):
-        self._check_jac(nonlin.BroydenSecond(self.x0, self.f0))
+        self._check_secant(nonlin.BroydenSecond)
 
     def test_broyden1_sherman_morrison(self):
         # Check that BroydenFirst is as expected for the 1st iteration
-        jac = nonlin.BroydenFirst(self.x0, self.f0, alpha=0.1)
-        jac.update(self.x1, self.f1)
+        jac = nonlin.BroydenFirst(self.xs[0], self.fs[0], alpha=0.1)
+        jac.update(self.xs[1], self.fs[1])
 
-        df = self.f1 - self.f0
-        dx = self.x1 - self.x0
-        j0 = -1./0.1 * np.eye(4)
+        df = self.fs[1] - self.fs[0]
+        dx = self.xs[1] - self.xs[0]
+        j0 = -1./0.1 * np.eye(5)
         j0 += (df - dot(j0, dx))[:,None] * dx[None,:] / dot(dx, dx)
 
         assert np.allclose(inv(j0), jac.Gm)
+
+    def test_anderson(self):
+        # Anderson mixing (with w0=0) satisfies secant conditions
+        # for the last M iterates, see [Ey]_
+        #
+        # .. [Ey] V. Eyert, J. Comp. Phys., 124, 271 (1996).
+        self._check_secant(nonlin.Anderson, M=3, w0=0, npoints=3)
 
 class TestNonlinOldTests(TestCase):
     """ Test case for a simple constrained entropy maximization problem
