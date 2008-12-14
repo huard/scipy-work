@@ -2,6 +2,7 @@
 Nonlinear solvers
 =================
 
+A collection of general-purpose nonlinear multidimensional solvers.
 These solvers find x for which F(x)=0. Both x and F can be multidimensional.
 
 They accept the user defined function F, which accepts an ndarray x and it
@@ -23,42 +24,37 @@ All solvers have the parameter iter (the number of iterations to compute), some
 of them have other parameters of the solver, see the particular solver for
 details.
 
-A collection of general-purpose nonlinear multidimensional solvers.
 
-   broyden1            --  Broyden's first method - is a quasi-Newton-Raphson
-                           method for updating an approximate Jacobian and then
-                           inverting it
-   broyden2            --  Broyden's second method - the same as broyden1, but
-                           updates the inverse Jacobian directly
-   broyden3            --  Broyden's second method - the same as broyden2, but
-                           instead of directly computing the inverse Jacobian,
-                           it remembers how to construct it using vectors, and
-                           when computing inv(J)*F, it uses those vectors to
-                           compute this product, thus avoding the expensive NxN
-                           matrix multiplication.
-   broyden_generalized --  Generalized Broyden's method, the same as broyden2,
-                           but instead of approximating the full NxN Jacobian,
-                           it construct it at every iteration in a way that
-                           avoids the NxN matrix multiplication.  This is not
-                           as precise as broyden3.
+Methods
+-------
 
-   anderson            --  extended Anderson method, the same as the
-                           broyden_generalized, but added w_0^2*I to before
-                           taking inversion to improve the stability
-   anderson2           --  the Anderson method, the same as anderson, but
-                           formulated differently
+General nonlinear solvers:
+
+.. autosummary::
+   :toctree:
+
+   broyden1
+   broyden2
+   anderson
+
+Simple iterations:
+
+.. autosummary::
+   :toctree:
+
+   linearmixing
+   vackar
+   excitingmixing
 
 """
 
 import math
 import numpy as np
 from numpy.linalg import norm, solve
-from numpy import asarray, dot
+from numpy import asarray, dot, vdot
 
-__all__ = ['broyden1', 'broyden2', 'broyden3',
-           'broyden1_modified', 'broyden_modified', 'linearmixing',
-           'vackar', 'excitingmixing', 'broyden_generalized',
-           'anderson', 'anderson2']
+__all__ = ['broyden1', 'broyden2', 'anderson', 'linearmixing',
+           'vackar', 'excitingmixing']
 
 #------------------------------------------------------------------------------
 # Utility functions
@@ -322,9 +318,11 @@ class GenericBroyden(Jacobian):
         self.last_f = f
         self.last_x = x
 
-class GoodBroyden(GenericBroyden):
+class BroydenFirst(GenericBroyden):
     __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using 'Good' Broyden Jacobian approximation.
+    Find a root of a function, using Broyden's first Jacobian approximation.
+
+    This method is also known as \"Broyden's good method\".
     """, """
     alpha : float, optional
         Initial guess for the Jacobian is (-1/alpha).""")
@@ -339,9 +337,11 @@ class GoodBroyden(GenericBroyden):
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.Jm += (df - dot(self.Jm, dx))[:,None] * dx[None,:]/dx_norm**2
 
-class BadBroyden(GenericBroyden):
+class BroydenSecond(GenericBroyden):
     __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
+    Find a root of a function, using Broyden\'s second Jacobian approximation.
+
+    This method is also known as \"Broyden's bad method\".
     """, """
     alpha : float, optional
         Initial guess for the Jacobian is (-1/alpha).""")
@@ -356,138 +356,42 @@ class BadBroyden(GenericBroyden):
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
 
-class BadBroyden2(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
-    
-    The inverse Jacobian matrix is stored implicitly in this method.
-    """, """
-    alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).""")
-    
-    def __init__(self, x0, f0, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0)
-        self.zy = []
-        self.alpha = alpha
-
-    def solve(self, f):
-        s = -self.alpha * f
-        for z, y in self.zy:
-            s += z * dot(y, f)
-        return s
-
-    def _update(self, x, f, dx, df, dx_norm, df_norm):
-        z = dx - self.solve(df)
-        y = df / norm(df)**2
-        self.zy.append((z, y))
-
-class BadBroydenModified(BadBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
-    
-    The inverse Jacobian matrix is updated using non-standard matrix
-    identities in this method.
-    """, """
-    alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).""")
-    
-    def _inv(self, A, u, v):
-        Au = dot(A, u)
-        return A - Au[:,None] * dot(v,A)[None,:]/(1. + dot(v, Au))
-
-    def _update(self, x, f, dx, df, dx_norm, df_norm):
-        dx /= dx_norm
-        df /= dx_norm
-        self.Gm = self._inv(self.Gm + dx[:,None]*dot(dx,self.Gm)[None,:],df,dx)
-
-#------------------------------------------------------------------------------
-# Modified formulas; not necessarily Quasi-Newton any more
-#------------------------------------------------------------------------------
-
-class BadBroydenModified2(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using 'Bad' Broyden Jacobian approximation.
-    
-    In this routine, the inverse Jacobian matrix is stored in in implicit form.
-    """, """
-    alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).
-    w0 : float, optional
-        Tunable parameter in the update formula
-    wl : float, optionaö
-        Tunable parameter in the update formula""")
-
-    def __init__(self, x0, f0, alpha=0.35, w0=0.01, wl=5):
-        GenericBroyden.__init__(self, x0, f0)
-        self.w = []
-        self.u = []
-        self.df = []
-        self.beta = None
-        self.alpha = alpha
-        self.wl = wl
-        self.w0 = w0
-
-    def solve(self, f):
-        w, u, beta = self.w, self.u, self.beta
-        dx = -self.alpha * f
-        M = len(self.w)
-        for i in xrange(M):
-            for j in xrange(M):
-                dx += w[i]*w[j]*beta[i,j]*u[j]*dot(self.df[i], f)
-        return dx
-
-    def _update(self, x, f, dx, df, dx_norm, df_norm):
-        f_norm = norm(f)
-
-        w, u = self.w, self.u
-
-        w.append(self.wl / f_norm)
-        u.append((self.alpha*df + dx) / df_norm)
-        self.df.append(df / df_norm)
-
-        M = len(self.w)
-        a = np.empty((M, M))
-        for i in xrange(M):
-            for j in xrange(M):
-                a[i,j] =w[i]*w[j]*dot(self.df[j], self.df[i])
-        self.beta = np.linalg.inv(self.w0**2*np.identity(M) + a)
-
 #------------------------------------------------------------------------------
 # Broyden-like (restricted memory)
 #------------------------------------------------------------------------------
 
-class BroydenGeneralized(GenericBroyden):
+class Anderson(GenericBroyden):
     __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using a variant of Anderson mixing.
-    
+    Find a root of a function, using (extended) Anderson mixing.
+
     The jacobian is formed by for a 'best' solution in the space
     spanned by last `M` vectors. As a result, only a MxM matrix
-    inversion and MxN multiplication is required.
+    inversion and MxN multiplication is required. [Ey]_
 
-    .. warning::
-
-       The algorithm implemented in this routine is not suitable for
-       general root finding. It may be useful for specific problems,
-       but whether it will work may depend strongly on the problem.
+    .. [Ey] V. Eyert, J. Comp. Phys., 124, 271 (1996).
 
     """, """
     alpha : float, optional
         Initial guess for the Jacobian is (-1/alpha).
     M : float, optional
-        Number of previous vectors to retain. Defaults to 5.""")
+        Number of previous vectors to retain. Defaults to 5.
+    w0 : float, optional
+        Regularization parameter for numerical stability.
+        Compared to unity, good values of the order of 0.01.""")
 
-    def __init__(self, x0, f0, alpha=0.1, M=5):
+    def __init__(self, x0, f0, alpha=0.1, w0=0.01, M=5):
         GenericBroyden.__init__(self, x0, f0)
         self.alpha = alpha
         self.M = M
         self.dx = []
         self.df = []
         self.gamma = None
+        self.w0 = w0
 
     def solve(self, f):
         dx = -self.alpha*f
         for m in xrange(len(self.dx)):
-            dx += self.gamma[m]*self.dx[m] + self.alpha*self.df[m]
+            dx += self.gamma[m]*(self.dx[m] + self.alpha*self.df[m])
         return dx
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
@@ -502,117 +406,23 @@ class BroydenGeneralized(GenericBroyden):
             self.df.pop(0)
 
         n = len(self.dx)
-        a = self._form_a()
+        a = np.zeros((n, n))
         
+        for i in xrange(n):
+            for j in xrange(i, n):
+                if i == j:
+                    wd = self.w0**2
+                else:
+                    wd = 0
+                a[i,j] = (1+wd)*vdot(self.df[i], self.df[j])
+
+        a += np.triu(a, 1).T.conj()
+
         dFF = np.empty(n)
         for k in xrange(n):
-            dFF[k] = dot(self.df[k], f)
+            dFF[k] = vdot(self.df[k], f)
 
         self.gamma = solve(a, dFF)
-
-    def _form_a(self):
-        n = len(self.dx)
-        a = np.empty((n, n))
-        for i in xrange(n):
-            for j in xrange(n):
-                a[i,j] = dot(self.df[i], self.df[j])
-        return a
-
-class Anderson(BroydenGeneralized):
-    __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using extended Anderson mixing.
-    
-    It is formed by for a 'best' solution in the space spanned by last `M`
-    vectors. As a result, only a MxM matrix inversion and MxN multiplication
-    is required.
-
-    .. warning::
-
-       The algorithm implemented in this routine is not suitable for
-       general root finding. It may be useful for specific problems,
-       but whether it will work may depend strongly on the problem.
-
-    """, """
-    alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).
-    M : float, optional
-        Number of previous vectors to retain. Defaults to 5.
-    w0 : float, optional
-        Regularization parameter.""")
-    
-    def __init__(self, x0, f0, alpha=0.1, M=5, w0=0.01):
-        BroydenGeneralized.__init__(self, x0, f0, alpha, M)
-        self.w0 = w0
-
-    def _form_a(self):
-        n = len(self.dx)
-        a = np.empty((n, n))
-        for i in xrange(n):
-            for j in xrange(n):
-                if i == j:
-                    wd = self.w0**2
-                else:
-                    wd = 0
-                a[i,j] = (1+wd)*dot(self.df[i], self.df[j])
-        return a
-
-class Anderson2(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
-    Find a root of a function, using extended Anderson mixing (another form).
-    
-    It is formed by for a 'best' solution in the space spanned by last `M`
-    vectors. As a result, only a MxM matrix inversion and MxN multiplication
-    is required.
-
-    .. warning::
-
-       The algorithm implemented in this routine is not suitable for
-       general root finding. It may be useful for specific problems,
-       but whether it will work may depend strongly on the problem.
-
-    """, """
-    alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).
-    M : float, optional
-        Number of previous vectors to retain. Defaults to 5.
-    w0 : float, optional
-        Regularization parameter.""")
-
-    def __init__(self, x0, f0, alpha=0.1, M=5, w0=0.01):
-        GenericBroyden.__init__(self, x0, f0)
-        self.alpha = alpha
-        self.M = M
-        self.w0 = w0
-        self.df = []
-
-    def solve(self, f):
-        dx = f.copy()
-        for m in xrange(len(self.df)):
-            dx += self.theta[m] * (self.df[m] - f)
-        dx *= -self.alpha
-        return dx
-
-    def _update(self, x, f, dx, df, dx_norm, df_norm):
-        self.df.append(f - df)
-
-        while len(self.df) > self.M:
-            self.df.pop(0)
-
-        n = len(self.df)
-        a = np.empty((n, n))
-        for i in xrange(n):
-            for j in xrange(n):
-                if i == j:
-                    wd = self.w0**2
-                else:
-                    wd = 0
-                a[i,j] = (1 + wd)*dot(f - self.df[i], f - self.df[j])
-
-        dFF = np.empty(n)
-        for k in xrange(n):
-            dFF[k] = dot(f - self.df[k], f)
-
-        self.theta = solve(a, dFF)
 
 #------------------------------------------------------------------------------
 # Simple iterations
@@ -732,15 +542,11 @@ def _broyden_wrapper(name, jac):
     func.__doc__ = jac.__doc__
     return func
 
-broyden1 = _broyden_wrapper('broyden1', GoodBroyden)
-broyden2 = _broyden_wrapper('broyden2', BadBroyden)
-broyden3 = _broyden_wrapper('broyden3', BadBroyden2)
-broyden1_modified = _broyden_wrapper('broyden1_modified', BadBroydenModified)
-broyden_modified = _broyden_wrapper('broyden_modified', BadBroydenModified2)
+broyden1 = _broyden_wrapper('broyden1', BroydenFirst)
+broyden2 = _broyden_wrapper('broyden2', BroydenSecond)
+
+anderson = _broyden_wrapper('anderson', Anderson)
+
 linearmixing = _broyden_wrapper('linearmixing', LinearMixing)
 vackar = _broyden_wrapper('vackar', Vackar)
 excitingmixing = _broyden_wrapper('excitingmixing', ExcitingMixing)
-broyden_generalized = _broyden_wrapper('broyden_generalized',
-                                       BroydenGeneralized)
-anderson = _broyden_wrapper('anderson', Anderson)
-anderson2 = _broyden_wrapper('anderson2', Anderson2)
