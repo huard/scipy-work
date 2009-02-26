@@ -70,8 +70,10 @@ def test_all():
 
         Data(exp1, 'expint_1_data.txt', 1, 2),
         Data(exp1, 'expint_1_data.txt', 1j, 2, rtol=2e-9),
-        Data(expi, 'expinti_data.txt', 0, 1, param_filter=(lambda x: x>0)),
-        Data(expi, 'expinti_data_double.txt', 0, 1, param_filter=(lambda x: x>0)),
+        Data(expi, 'expinti_data.txt', 0, 1, rtol=1e-13,
+             param_filter=(lambda x: x>0)),
+        Data(expi, 'expinti_data_double.txt', 0, 1,
+             param_filter=(lambda x: x>0)),
 
         Data(expn, 'expint_small_data.txt', (0,1), 2),
         Data(expn, 'expint_data.txt', (0,1), 2),
@@ -84,7 +86,7 @@ def test_all():
         Data(expm1, 'log1p_expm1_data.txt', 0, 2),
 
         Data(iv, 'bessel_i_data.txt', (0,1), 2, rtol=1e-12),
-        Data(iv, 'bessel_i_data.txt', (0,1j), 2, rtol=2e-10),
+        Data(iv, 'bessel_i_data.txt', (0,1j), 2, rtol=2e-10, atol=1e-306),
         Data(iv, 'bessel_i_int_data.txt', (0,1), 2, rtol=1e-9),
         Data(iv, 'bessel_i_int_data.txt', (0,1j), 2, rtol=2e-10),
 
