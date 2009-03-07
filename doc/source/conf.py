@@ -21,7 +21,8 @@ if sphinx.__version__ < "0.5":
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
 extensions = ['sphinx.ext.autodoc', 'sphinx.ext.pngmath', 'numpydoc',
               'phantom_import', 'autosummary', 'sphinx.ext.intersphinx',
-              'sphinx.ext.coverage', 'only_directives', 'plot_directive']
+              'sphinx.ext.coverage', 'matplotlib.sphinxext.only_directives',
+              'matplotlib.sphinxext.plot_directive']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -237,5 +238,17 @@ plot_pre_code = """
 import numpy
 numpy.random.seed(123)
 """
-plot_output_dir = '_static/plot_directive'
 plot_include_source = True
+
+import matplotlib
+matplotlib.rcParams.update({
+    'font.size': 9,
+    'axes.titlesize': 9,
+    'axes.labelsize': 9,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'figure.figsize': (4, 3),
+    'path.simplify': True,
+})
+
