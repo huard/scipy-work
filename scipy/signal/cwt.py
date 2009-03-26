@@ -4,7 +4,6 @@ import numpy as np
 from scipy.fftpack import fft, ifft
 
 class Wavelet(object):
-self.coefs
     def __init__(self,wt,wavelet,weighting_function,signal_dtype):
         self.coefs = wt[:,0:wavelet.len_signal]
 
@@ -50,7 +49,8 @@ self.coefs
 
     def get_wavelet_var(self):
         """
-        Calculate Wavelet Variance (a.k.a. the Global Wavelet Spectrum of Torrence and Compo (1998))
+        Calculate Wavelet Variance (a.k.a. the Global Wavelet Spectrum of
+        Torrence and Compo (1998))
 
         Notes
         -----
@@ -159,15 +159,18 @@ self.coefs
 
 def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
     """
-    Computes the continuous wavelet transform of x using the mother wavelet `wavelet`.
+    Computes the continuous wavelet transform of x using the mother wavelet
+    `wavelet`.
 
-    This function computes the continuous wavelet transform of x using an instance a mother wavelet object.
+    This function computes the continuous wavelet transform of x using an
+    instance a mother wavelet object.
 
     The cwt is defined as:
 
         T(a,b) = w(a) integral(-inf,inf)(x(t) * psi*{(t-b)/a} dt
 
-    which is a convolution.  In this algorithm, the convolution in the time domain is implemented as a multiplicaion in the Fourier domain.
+    which is a convolution.  In this algorithm, the convolution in the time
+    domain is implemented as a multiplicaion in the Fourier domain.
 
     Parameters
     ----------
@@ -184,12 +187,15 @@ def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
     Returns
     -------
 
-    Returns an instance of the Wavelet class.  The coefficients of the transform can be obtain by the coefs() method (i.e.  wavelet.coefs() )
+    Returns an instance of the Wavelet class.  The coefficients of the transform
+    can be obtain by the coefs() method (i.e.  wavelet.coefs() )
 
     Examples
     --------
 
-    Create instance of SDG mother wavelet, nomalized, using 10 scales and the center frequency of the Fourier transform as the characteristic frequency.  Then, perform the continuous wavelet transform and plot the scalogram.
+    Create instance of SDG mother wavelet, nomalized, using 10 scales and the
+    center frequency of the Fourier transform as the characteristic frequency.
+    Then, perform the continuous wavelet transform and plot the scalogram.
 
     x = numpy.arange(0,2*numpy.pi,numpy.pi/8.)
     data = numpy.sin(x**2)
@@ -284,7 +290,8 @@ def icwt(wavelet):
     mwf = fft(mw,axis=1)
     # perform inverse continuous wavelet transform and make sure the result is the same type
     #  (real or complex) as the origional data used in the transform
-    x=((1 / wavelet.motherwavelet.cg) * trapz(np.fft.fftshift(ifft(wcf * mwf,axis=1),axes=[1]),axis=0)).astype(wavelet._signal_dtype)
+    x=((1 / wavelet.motherwavelet.cg) * trapz(np.fft.fftshift(ifft(
+        wcf * mwf,axis=1),axes=[1]),axis=0)).astype(wavelet._signal_dtype)
 
     return x[0:wavelet.motherwavelet.len_signal]
 
@@ -297,13 +304,15 @@ class MotherWavelet(object):
     @staticmethod
     def get_coefs(self):
         """
-        raise error method for calculating mother wavelet coefficients is missing!
+        raise error method for calculating mother wavelet coefficients is
+        missing!
         """
         raise NotImplementedError('get_coefs needs to be implemented for the mother wavelet')
 
 class SDG(MotherWavelet):
     """
-    SDG(self, len_signal = None, pad_to = None, scales = None, sampf = 1, normalize = True, fc = 'bandpass')
+    SDG(self, len_signal = None, pad_to = None, scales = None, sampf = 1,
+        normalize = True, fc = 'bandpass')
 
     Class for the SDG MotherWavelet (a subclass of MotherWavelet).
 
@@ -313,30 +322,38 @@ class SDG(MotherWavelet):
     len_signal : int
         length of time series to be decomposed
     pad_to : int
-        pad time series to a total length `pad_to` using zero padding (note, signal will be zero padded automatically during continuous wavelet transform if pad_to is set).
+        pad time series to a total length `pad_to` using zero padding (note,
+        the signal will be zero padded automatically during continuous wavelet
+        transform if pad_to is set).
     scales : array
         array of scales used to initilize the mother wavelet
     sampf : float
         sample frequency of the time series to be decomposed
     normalize : bool
-        If True, the normalized version of the mother wavelet will be use (i.e. the mother wavelet will have unit energy)
+        If True, the normalized version of the mother wavelet will be used (i.e.
+        the mother wavelet will have unit energy)
     fc : string
-        Characteristic frequency - use the 'bandpass' or 'center' frequency of the Fourier specturm of the mother wavelet to relate scale to period (default is 'bandpass')
+        Characteristic frequency - use the 'bandpass' or 'center' frequency of
+        the Fourier specturm of the mother wavelet to relate scale to period
+        (default is 'bandpass')
 
     Returns
     -------
-    Returns an instance of the MotherWavelet class which is used in the cwt and icwt functions.
+    Returns an instance of the MotherWavelet class which is used in the cwt and
+    icwt functions.
 
     Examples
     --------
 
-    Create instance of SDG mother wavelet, nomalized, using 10 scales and the center frequency of the Fourier transform as the characteristic frequency.  Then, perform the continuous wavelet transform and plot the scalogram.
+    Create instance of SDG mother wavelet, nomalized, using 10 scales and the
+    center frequency of the Fourier transform as the characteristic frequency.
+    Then, perform the continuous wavelet transform and plot the scalogram.
 
     x = numpy.arange(0,2*numpy.pi,numpy.pi/8.)
     data = numpy.sin(x**2)
     scales = numpy.arange(10)
 
-    mother_wavelet = SDG(len_signal = len(data), scales = np.arange(10), normalize = True, fc = 'center')
+    mother_wavelet = SDG(len_signal = len(data), scales = np.arange(10),normalize = True, fc = 'center')
     wavelet = cwt(data, mother_wavelet)
     wave_coefs.scalogram()
 
@@ -406,7 +423,8 @@ class SDG(MotherWavelet):
 
 class Morlet(MotherWavelet):
     """
-    Morlet(self, len_signal = None, pad_to = None, scales = None, sampf = 1, f0 = 6)
+    Morlet(self, len_signal = None, pad_to = None, scales = None,
+           sampf = 1, f0 = 6)
 
     Class for the SDG MotherWavelet (a subclass of MotherWavelet).
 
@@ -416,22 +434,28 @@ class Morlet(MotherWavelet):
     len_signal : int
         length of time series to be decomposed
     pad_to : int
-        pad time series to a total length `pad_to` using zero padding (note, signal will be zero padded automatically during continuous wavelet transform if pad_to is set).
+        pad time series to a total length `pad_to` using zero padding (note,
+        the signal will be zero padded automatically during continuous wavelet
+        transform if pad_to is set).
     scales : array
         array of scales used to initilize the mother wavelet
     sampf : float
         sample frequency of the time series to be decomposed
     f0 : float
-        central frequency of the Morlet mother wavelet.  The Fourier specturm of the Morlet wavelet appears as a gaussian centered on f0.  f0 defaults to a value of 0.849 (the angular frequency would be ~5.336)
+        central frequency of the Morlet mother wavelet.  The Fourier specturm of
+        the Morlet wavelet appears as a gaussian centered on f0.  f0 defaults
+        to a value of 0.849 (the angular frequency would be ~5.336)
 
     Returns
     -------
-    Returns an instance of the MotherWavelet class which is used in the cwt and icwt functions.
+    Returns an instance of the MotherWavelet class which is used in the cwt
+    and icwt functions.
 
     Examples
     --------
 
-    Create instance of Morlet mother wavelet using 10 scales, perform the continuous wavelet transform, and plot the resulting scalogram.
+    Create instance of Morlet mother wavelet using 10 scales, perform the
+    continuous wavelet transform, and plot the resulting scalogram.
 
     x = numpy.arange(0,2*numpy.pi,numpy.pi/8.)
     data = numpy.sin(x**2)
@@ -444,9 +468,11 @@ class Morlet(MotherWavelet):
     Notes
     -----
 
-    Morlet wavelet is defined as having unit energy, so the `normalize` flag will always be set to True
+    Morlet wavelet is defined as having unit energy, so the `normalize` flag
+    will always be set to True
 
-    The Morlet wavelet will always use f0 as it's characterstic frequency, so fc is set as f0
+    The Morlet wavelet will always use f0 as it's characterstic frequency, so fc
+    is set as f0
 
     References
 
@@ -472,7 +498,7 @@ class Morlet(MotherWavelet):
         self.fc = f0
 
         #set admissibility constant
-        ###FIX - based on http://www.ecs.syr.edu/Faculty/lewalle/tutor/node14.html ###
+        ###FIX - based on http://www.ecs.syr.edu/Faculty/lewalle/tutor/node14.html
         self.cg = 1.44057
 
         #compute coefficients for the dilated mother wavelet
