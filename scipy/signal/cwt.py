@@ -1,6 +1,4 @@
-#!/usr/bin/python
-
-__all__ = ['cwt', 'cxwt', 'icwt', 'SDG', 'Morlet']
+__all__ = ['cwt', 'ccwt', 'icwt', 'SDG', 'Morlet']
 
 import numpy as np
 from scipy.fftpack import fft, ifft
@@ -230,9 +228,9 @@ def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
 
     return Wavelet(wt,wavelet,weighting_function,signal_dtype)
 
-def cxwt(x1,x2,wavelet):
+def ccwt(x1,x2,wavelet):
     '''
-    Compute the cross-wavelet transform of 'x1' and 'x2' using the
+    Compute the continuous cross-wavelet transform of 'x1' and 'x2' using the
     mother wavelet 'wavelet', which is an instance of the motherwavelet class.
 
     Parameters
