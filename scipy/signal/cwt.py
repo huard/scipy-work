@@ -68,7 +68,7 @@ class Wavelet(object):
 
         return wvar
 
-    def scalogram(self,show_wps=False,ts = None,time = None, use_period = True, ylog_base = None,origin='top'):
+    def scalogram(self,show_coi=False,show_wps=False,ts = None,time = None, use_period = True, ylog_base = None,origin='top'):
         import matplotlib.pyplot as plt
         import matplotlib.cm as cm
         from pylab import poly_between
@@ -84,7 +84,7 @@ class Wavelet(object):
         elif show_wps and not show_ts:
             #show scalogram and wps
             figrow = 1
-            figcol = 2
+            figcol = 4
         elif not show_wps and show_ts:
             #show scalogram and ts
             figrow = 2
@@ -92,7 +92,7 @@ class Wavelet(object):
         else:
             #show scalogram, wps, and ts
             figrow = 2
-            figcol = 2
+            figcol = 4
 
         if time is None:
             x = np.arange(self.motherwavelet.len_signal)
@@ -106,6 +106,32 @@ class Wavelet(object):
 
         fig = plt.figure(figsize=(12, 9))
         ax1 = fig.add_subplot(figrow,figcol,1)
+
+        # if show wps, give 3/4 space to scalogram, 1/4 to wps
+        if show_wps:
+            # create temp axis at 3 or 4 col of row 1
+            axt = fig.add_subplot(figrow,figcol,3)
+            # get location of axtmp and ax1
+            axt_pos = axt.get_position()
+            ax1_pos = ax1.get_position()
+            axt_points = axt_pos.get_points()
+            ax1_points = ax1_pos.get_points()
+            # set axt_pos left bound to that of ax1
+            axt_points[0][0] = ax1_points[0][0]
+            ax1.set_position(axt_pos)
+            fig.delaxes(axt)
+
+        if show_coi:
+            # coi_coef is defined using the assumption that you are using
+            #   period, not scale, in plotting - this handles that behavior
+            if use_period:
+                coi = self.motherwavelet.get_coi()
+            else:
+                coi = self.motherwavelet.get_coi() * self.motherwavelet.fc
+
+            coi[coi==0]=0.00000001
+            xs,ys = poly_between(np.arange(0,len(coi)),np.max(y),coi)
+            ax1.fill(xs,ys,'k',alpha=0.4,zorder = 2)
 
         contf=ax1.contourf(x,y,np.abs(self.coefs)**2)
         fig.colorbar(contf, ax=ax1, orientation = 'vertical',format='%2.1f')
@@ -127,7 +153,7 @@ class Wavelet(object):
             ax1.set_ylabel('scales')
 
         if show_wps:
-            ax2 = fig.add_subplot(figrow,figcol,2)
+            ax2 = fig.add_subplot(figrow,figcol,4,sharey=ax1)
             if use_period:
                 ax2.plot(self.get_wps(),y,'k')
             else:
@@ -147,13 +173,19 @@ class Wavelet(object):
             ax2.set_title('wavelet power spectrum')
 
         if show_ts:
-            ax3 = fig.add_subplot(figrow,1,2)
+            ax3 = fig.add_subplot(figrow,2,3,sharex=ax1)
             ax3.plot(x,ts)
             ax3.plot(x,ts,'x')
             ax3.set_xlim((x[0],x[-1]))
             ax3.legend(['time series'])
             ax3.set_xlabel('time')
             ax3.grid()
+            # align time series fig with scalogram fig
+            t = ax3.get_position()
+            ax3pos=t.get_points()
+            ax3pos[1][0]=ax1.get_position().get_points()[1][0]
+            t.set_points(ax3pos)
+            ax3.set_position(t)
 
         plt.show()
 
@@ -305,9 +337,44 @@ class MotherWavelet(object):
     def get_coefs(self):
         """
         raise error method for calculating mother wavelet coefficients is
-        missing!
+        missing!  To follow the convention in the literature, please defind your
+        COI coef as a function of period, not scale - this will ensure
+        compatibility with the scalogram method.
         """
         raise NotImplementedError('get_coefs needs to be implemented for the mother wavelet')
+
+    @staticmethod
+    def get_coi_coef(sampf):
+        """
+        raise error if Cone of Influence coefficient is not set in subclass wavelet
+        """
+        raise NotImplementedError('coi_coef needs to be implemented in subclass wavelet')
+
+    #add methods for computing cone of influence and mask
+    def get_coi(self):
+        """
+        Compute cone of influence
+        """
+        y1 =  self.coi_coef*np.arange(0,self.len_signal/2)
+        y2 = -self.coi_coef*np.arange(0,self.len_signal/2)+y1[-1]
+        coi = np.r_[y1,y2]
+        self.coi = coi
+        return coi
+
+    def get_mask(self):
+        """
+        get mask for cone of influence.
+
+        Sets self.mask as an array of bools for use in np.ma.array('',mask=mask)
+        """
+        mask = np.ones(self.coefs.shape)
+        masks = self.coi_coef*self.scales
+        for s in range(0,len(self.scales)):
+            if (s != 0) and (int(np.ceil(masks[s])) < mask.shape[1]):
+                mask[s,np.ceil(int(masks[s])):-np.ceil(int(masks[s]))]=0
+        self.mask = mask.astype(bool)
+        return self.mask
+
 
 class SDG(MotherWavelet):
     """
@@ -360,6 +427,10 @@ class SDG(MotherWavelet):
     Notes
     -----
 
+    The coefficient that is used to defind the 'Cone of Influence' is based on
+    the use of period, not scale - if you wish to use scale, multiply coi_coef()
+    by `fc`.
+
     References
 
     Addison, P. S., 2002: The Illustrated Wavelet Transform Handbook.  Taylor
@@ -371,7 +442,8 @@ class SDG(MotherWavelet):
         self.scales = scales
         self.len_signal = len_signal
         self.normalize = normalize
-
+        # coi_coef defined under the assumption that period is used, not scale
+        self.coi_coef = 2*np.pi*np.sqrt(2./5.)/self.sampf ;#Torrence and Compo 1998
         self.name='second degree of a gaussian (mexican hat)'
 
         #set total length of wavelet to account for zero padding
@@ -468,11 +540,16 @@ class Morlet(MotherWavelet):
     Notes
     -----
 
-    Morlet wavelet is defined as having unit energy, so the `normalize` flag
+    * Morlet wavelet is defined as having unit energy, so the `normalize` flag
     will always be set to True
 
-    The Morlet wavelet will always use f0 as it's characterstic frequency, so fc
+    * The Morlet wavelet will always use f0 as it's characterstic frequency, so fc
     is set as f0
+
+    * The coefficient that is used to defind the 'Cone of Influence' is based on
+    the use of period, not scale - if you wish to use scale, multiply coi_coef()
+    by `fc`.
+
 
     References
 
@@ -485,7 +562,9 @@ class Morlet(MotherWavelet):
         self.scales = scales
         self.len_signal = len_signal
         self.normalize = True
-
+        # coi_coef defined under the assumption that period is used, not scale
+        ###FIX###
+        self.coi_coef = ((4*np.pi)/(f0 + np.sqrt(2. + f0**2)))/np.sqrt(2)/self.sampf ;#Torrence and Compo 1998
         self.name='Morlet'
 
         #set total length of wavelet to account for zero padding
