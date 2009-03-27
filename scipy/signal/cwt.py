@@ -4,15 +4,51 @@ import numpy as np
 from scipy.fftpack import fft, ifft
 
 class Wavelet(object):
-    def __init__(self,wt,wavelet,weighting_function,signal_dtype):
+    '''
+    Class for Wavelet object
+
+    The Wavelet object holds the wavelet coefficients as well as information on
+    how they were obtained.
+    '''
+
+    def __init__(self,wt,wavelet,weighting_function,signal_dtype,deep_copy=True):
+        '''
+        Initialization of Wavelet object.
+
+        Parameters
+        ----------
+        wt : array
+            array of wavelet coefficients
+        wavelet : object
+            mother wavelet object used in the creation of `wt`
+        weighting_function : function
+            function used in the creation of `wt`
+        signal_dtype : dtype
+            dtype of signal used in the creation of `wt`
+        deep_copy : bool
+            if true (default), the mother wavelet object used in the creation of
+            the wavelet object will be fully copied and accessible through
+            wavelet.motherwavelet; if false, wavelet.motherwavelet will be a
+            reference to the motherwavelet object.
+
+        Returns
+        -------
+
+        Returns an instance of the Wavelet class.
+        '''
+
+        from copy import deepcopy
         self.coefs = wt[:,0:wavelet.len_signal]
 
         if wavelet.len_signal !=  wavelet.len_wavelet:
             self._pad_coefs = wt[:,wavelet.len_signal:]
         else:
             self._pad_coefs = None
+        if deep_copy:
+            self.motherwavelet = deepcopy(wavelet)
+        else:
+            self.motherwavelet = wavelet
 
-        self.motherwavelet = wavelet
         self.weighting_function = weighting_function
         self._signal_dtype = signal_dtype
 
@@ -43,6 +79,7 @@ class Wavelet(object):
         """
         Calculate Wavelet Power Spectrum
         """
+
         wps =  1./ (self.motherwavelet.len_signal) * self.get_wes()
 
         return wps
@@ -52,14 +89,11 @@ class Wavelet(object):
         Calculate Wavelet Variance (a.k.a. the Global Wavelet Spectrum of
         Torrence and Compo (1998))
 
-        Notes
-        -----
-
         References
 
-        Torrence, C., and G. P. Compo, 1998: A Practical Guide to Wavlet Analysis.
-          Bulletin of the American Meteorological Society, 79, 1, pp. 61-78.
-
+        Torrence, C., and G. P. Compo, 1998: A Practical Guide to Wavelet
+          Analysis.  Bulletin of the American Meteorological Society, 79, 1,
+          pp. 61-78.
         """
 
         coef =  self.motherwavelet.cg * self.motherwavelet.fc
@@ -69,9 +103,54 @@ class Wavelet(object):
         return wvar
 
     def scalogram(self,show_coi=False,show_wps=False,ts = None,time = None, use_period = True, ylog_base = None,origin='top'):
+        """
+        Creates a simple plot of scalogram, with optional wavelet power specturm and
+        time series of the transformed signal.
+
+        Parameters
+        ----------
+        show_coi : bool
+            set to true to see Cone of Influence
+        show_wps : bool
+            set to true to see the Wavelet Power Spectrum
+        ts : array
+            1D array containing time series data used in wavelet transform.  If set,
+            time series will be plotted.
+        time : array
+            1D array containing time information
+        use_period : bool
+            set to true to see figures use period instead of scale
+        ylog_base : float
+            if a log scale is desired, set `ylog_base` as float. (for log 10, set
+            ylog_base = 10)
+        origin : 'top' or 'bottom'
+            set origin of scale axis to top or bottom of figure
+
+        Returns
+        -------
+
+        None
+
+        Examples
+        --------
+
+        Create instance of SDG mother wavelet, normalized, using 10 scales and the
+        center frequency of the Fourier transform as the characteristic frequency.
+        Then, perform the continuous wavelet transform and plot the scalogram.
+
+        x = numpy.arange(0,2*numpy.pi,numpy.pi/8.)
+        data = numpy.sin(x**2)
+        scales = numpy.arange(10)
+
+        mother_wavelet = SDG(len_signal = len(data), scales = np.arange(10), normalize = True, fc = 'center')
+        wavelet = cwt(data, mother_wavelet)
+        wave_coefs.scalogram(origin = 'bottom')
+        """
+
         import matplotlib.pyplot as plt
         import matplotlib.cm as cm
         from pylab import poly_between
+
         if ts is not None:
             show_ts = True
         else:
@@ -141,16 +220,23 @@ class Wavelet(object):
 
         if origin is 'top':
             ax1.set_ylim((y[-1],y[0]))
-        else:
+        elif origin is 'bottom':
             ax1.set_ylim((y[0],y[-1]))
+        else:
+            raise OriginError('`origin` must be set to "top" or "bottom"')
 
         ax1.set_xlim((x[0],x[-1]))
         ax1.set_title('scalogram')
         ax1.set_ylabel('time')
         if use_period:
             ax1.set_ylabel('period')
+            ax1.set_xlabel('time')
         else:
             ax1.set_ylabel('scales')
+            if time is not None:
+                ax1.set_xlabel('time')
+            else:
+                ax1.set_xlabel('sample')
 
         if show_wps:
             ax2 = fig.add_subplot(figrow,figcol,4,sharey=ax1)
@@ -178,7 +264,6 @@ class Wavelet(object):
             ax3.plot(x,ts,'x')
             ax3.set_xlim((x[0],x[-1]))
             ax3.legend(['time series'])
-            ax3.set_xlabel('time')
             ax3.grid()
             # align time series fig with scalogram fig
             t = ax3.get_position()
@@ -186,10 +271,14 @@ class Wavelet(object):
             ax3pos[1][0]=ax1.get_position().get_points()[1][0]
             t.set_points(ax3pos)
             ax3.set_position(t)
+            if (time is not None) or use_period:
+                ax3.set_xlabel('time')
+            else:
+                ax3.set_xlabel('sample')
 
         plt.show()
 
-def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
+def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5), deep_copy = True):
     """
     Computes the continuous wavelet transform of x using the mother wavelet
     `wavelet`.
@@ -202,19 +291,22 @@ def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
         T(a,b) = w(a) integral(-inf,inf)(x(t) * psi*{(t-b)/a} dt
 
     which is a convolution.  In this algorithm, the convolution in the time
-    domain is implemented as a multiplicaion in the Fourier domain.
+    domain is implemented as a multiplication in the Fourier domain.
 
     Parameters
     ----------
     x : 1D array
         time series to be transformed by the cwt
-
     wavelet : Instance of the MotherWavelet class
         instance of the MotherWavelet class for a particular wavelet family
-
     weighting_function:  Function used to weight
-        Typically w(a) = a^(-0.5) is choosen as it ensures that the
+        Typically w(a) = a^(-0.5) is chosen as it ensures that the
         wavelets at every scale have the same energy.
+    deep_copy : bool
+        if true (default), the mother wavelet object used in the creation of
+        the wavelet object will be fully copied and accessible through
+        wavelet.motherwavelet; if false, wavelet.motherwavelet will be a
+        reference to the motherwavelet object.
 
     Returns
     -------
@@ -225,7 +317,7 @@ def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
     Examples
     --------
 
-    Create instance of SDG mother wavelet, nomalized, using 10 scales and the
+    Create instance of SDG mother wavelet, normalized, using 10 scales and the
     center frequency of the Fourier transform as the characteristic frequency.
     Then, perform the continuous wavelet transform and plot the scalogram.
 
@@ -243,6 +335,7 @@ def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
     Addison, P. S., 2002: The Illustrated Wavelet Transform Handbook.  Taylor
       and Francis Group, New York/London. 353 pp.
     """
+
     signal_dtype = x.dtype
 
     if len(x) < wavelet.len_wavelet:
@@ -264,20 +357,23 @@ def cwt(x,wavelet,weighting_function = lambda x: x**(-0.5)):
     # if motherwavelet and signal are real, only keep real part of transform
     wt=wt.astype(np.lib.common_type(wavelet.coefs,x))
 
-    return Wavelet(wt,wavelet,weighting_function,signal_dtype)
+    return Wavelet(wt,wavelet,weighting_function,signal_dtype,deep_copy)
 
 def ccwt(x1,x2,wavelet):
     '''
     Compute the continuous cross-wavelet transform of 'x1' and 'x2' using the
-    mother wavelet 'wavelet', which is an instance of the motherwavelet class.
+    mother wavelet 'wavelet', which is an instance of the MotherWavelet class.
 
     Parameters
     ----------
+
     x1,x2 : 1D array
         time series used to compute cross-wavelet transform
-
     wavelet : Instance of the MotherWavelet class
         instance of the MotherWavelet class for a particular wavelet family
+
+    Returns
+    -------
 
     Returns an instance of the Wavelet class.
     '''
@@ -292,14 +388,11 @@ def icwt(wavelet):
 
     Parameters
     ----------
-
     wavelet : Instance of the MotherWavelet class
         instance of the MotherWavelet class for a particular wavelet family
 
-    Notes
-    -----
-
     References
+    ----------
 
     Addison, P. S., 2002: The Illustrated Wavelet Transform Handbook.  Taylor
       and Francis Group, New York/London. 353 pp.
@@ -329,18 +422,22 @@ def icwt(wavelet):
 
 class MotherWavelet(object):
     """
-
     Class for MotherWavelets
 
+    Contains methods related to mother wavelets.  Also used to ensure that new
+    mother wavelet objects contain the minimum requirements to be used in the
+    cwt related functions.
     """
+
     @staticmethod
     def get_coefs(self):
         """
         raise error method for calculating mother wavelet coefficients is
-        missing!  To follow the convention in the literature, please defind your
+        missing!  To follow the convention in the literature, please define your
         COI coef as a function of period, not scale - this will ensure
         compatibility with the scalogram method.
         """
+
         raise NotImplementedError('get_coefs needs to be implemented for the mother wavelet')
 
     @staticmethod
@@ -348,6 +445,7 @@ class MotherWavelet(object):
         """
         raise error if Cone of Influence coefficient is not set in subclass wavelet
         """
+
         raise NotImplementedError('coi_coef needs to be implemented in subclass wavelet')
 
     #add methods for computing cone of influence and mask
@@ -355,6 +453,7 @@ class MotherWavelet(object):
         """
         Compute cone of influence
         """
+
         y1 =  self.coi_coef*np.arange(0,self.len_signal/2)
         y2 = -self.coi_coef*np.arange(0,self.len_signal/2)+y1[-1]
         coi = np.r_[y1,y2]
@@ -367,6 +466,7 @@ class MotherWavelet(object):
 
         Sets self.mask as an array of bools for use in np.ma.array('',mask=mask)
         """
+
         mask = np.ones(self.coefs.shape)
         masks = self.coi_coef*self.scales
         for s in range(0,len(self.scales)):
@@ -393,7 +493,7 @@ class SDG(MotherWavelet):
         the signal will be zero padded automatically during continuous wavelet
         transform if pad_to is set).
     scales : array
-        array of scales used to initilize the mother wavelet
+        array of scales used to initialize the mother wavelet
     sampf : float
         sample frequency of the time series to be decomposed
     normalize : bool
@@ -401,18 +501,19 @@ class SDG(MotherWavelet):
         the mother wavelet will have unit energy)
     fc : string
         Characteristic frequency - use the 'bandpass' or 'center' frequency of
-        the Fourier specturm of the mother wavelet to relate scale to period
+        the Fourier spectrum of the mother wavelet to relate scale to period
         (default is 'bandpass')
 
     Returns
     -------
+
     Returns an instance of the MotherWavelet class which is used in the cwt and
     icwt functions.
 
     Examples
     --------
 
-    Create instance of SDG mother wavelet, nomalized, using 10 scales and the
+    Create instance of SDG mother wavelet, normalized, using 10 scales and the
     center frequency of the Fourier transform as the characteristic frequency.
     Then, perform the continuous wavelet transform and plot the scalogram.
 
@@ -427,24 +528,24 @@ class SDG(MotherWavelet):
     Notes
     -----
 
-    The coefficient that is used to defind the 'Cone of Influence' is based on
+    The coefficient that is used to defined the 'Cone of Influence' is based on
     the use of period, not scale - if you wish to use scale, multiply coi_coef()
-    by `fc`.
+    by `motherwavelet.fc`.
 
     References
-
+    ----------
     Addison, P. S., 2002: The Illustrated Wavelet Transform Handbook.  Taylor
       and Francis Group, New York/London. 353 pp.
-
     """
+
     def __init__(self,len_signal=None,pad_to=None,scales=None,sampf=1,normalize=True, fc = 'bandpass'):
+        self.name='second degree of a Gaussian (mexican hat)'
         self.sampf = sampf
         self.scales = scales
         self.len_signal = len_signal
         self.normalize = normalize
         # coi_coef defined under the assumption that period is used, not scale
         self.coi_coef = 2*np.pi*np.sqrt(2./5.)/self.sampf ;#Torrence and Compo 1998
-        self.name='second degree of a gaussian (mexican hat)'
 
         #set total length of wavelet to account for zero padding
         if pad_to is None:
@@ -510,12 +611,12 @@ class Morlet(MotherWavelet):
         the signal will be zero padded automatically during continuous wavelet
         transform if pad_to is set).
     scales : array
-        array of scales used to initilize the mother wavelet
+        array of scales used to initialize the mother wavelet
     sampf : float
         sample frequency of the time series to be decomposed
     f0 : float
-        central frequency of the Morlet mother wavelet.  The Fourier specturm of
-        the Morlet wavelet appears as a gaussian centered on f0.  f0 defaults
+        central frequency of the Morlet mother wavelet.  The Fourier spectrum of
+        the Morlet wavelet appears as a Gaussian centered on f0.  f0 defaults
         to a value of 0.849 (the angular frequency would be ~5.336)
 
     Returns
@@ -541,22 +642,24 @@ class Morlet(MotherWavelet):
     -----
 
     * Morlet wavelet is defined as having unit energy, so the `normalize` flag
-    will always be set to True
+      will always be set to True
 
-    * The Morlet wavelet will always use f0 as it's characterstic frequency, so fc
-    is set as f0
+    * The Morlet wavelet will always use f0 as it's characteristic frequency, so
+      fc is set as f0
 
-    * The coefficient that is used to defind the 'Cone of Influence' is based on
-    the use of period, not scale - if you wish to use scale, multiply coi_coef()
-    by `fc`.
+    * The coefficient that is used to defined the 'Cone of Influence' is based
+      on the use of period, not scale - if you wish to use scale, multiply
+      coi_coef() by `motherwavelet.fc`.
 
 
     References
+    ----------
 
     Addison, P. S., 2002: The Illustrated Wavelet Transform Handbook.  Taylor
       and Francis Group, New York/London. 353 pp.
 
     """
+
     def __init__(self,len_signal=None,pad_to=None,scales=None,sampf=1,normalize=True, f0 = 0.849):
         self.sampf = sampf
         self.scales = scales
