@@ -1,11 +1,12 @@
 """
 Orthogonal polynomials
 """
+from numpy.testing import *
 
 from test_basic import assert_tol_equal
 from scipy.special import *
 
-class TestCheby(TestCase):
+class TestCheby(object):
     def test_chebyc(self):
         C0 = chebyc(0)
         C1 = chebyc(1)
@@ -63,7 +64,7 @@ class TestCheby(TestCase):
         assert_array_almost_equal(U4.c,[16,0,-12,0,1],13)
         assert_array_almost_equal(U5.c,[32,0,-32,0,6,0],13)
 
-class TestGegenbauer(TestCase):
+class TestGegenbauer(object):
 
     def test_gegenbauer(self):
         a = 5*rand()-0.5
@@ -86,7 +87,7 @@ class TestGegenbauer(TestCase):
                                                0,15*poch(a,3),0])/15.0,11)
 
 
-class TestHermite(TestCase):
+class TestHermite(object):
     def test_hermite(self):
         H0 = hermite(0)
         H1 = hermite(1)
@@ -125,7 +126,7 @@ class TestHermite(TestCase):
         assert_array_almost_equal(H5.c,he5.c,13)
 
 
-class TestLaguerre(TestCase):
+class TestLaguerre(object):
     def test_laguerre(self):
         lag0 = laguerre(0)
         lag1 = laguerre(1)
@@ -152,7 +153,7 @@ class TestLaguerre(TestCase):
         assert_almost_equal(lag3.c,array([-1,3*(k+3),-3*(k+2)*(k+3),(k+1)*(k+2)*(k+3)])/6.0)
 
 
-class TestLegendre(TestCase):
+class TestLegendre(object):
     def test_legendre(self):
         leg0 = legendre(0)
         leg1 = legendre(1)
@@ -167,7 +168,7 @@ class TestLegendre(TestCase):
         assert_almost_equal(leg4.c,array([35,0,-30,0,3])/8.0)
         assert_almost_equal(leg5.c,array([63,0,-70,0,15,0])/8.0)
 
-class TestJacobi(TestCase):
+class TestJacobi(object):
     def test_jacobi(self):
         a = 5*rand() - 1
         b = 5*rand() - 1
@@ -187,7 +188,7 @@ class TestJacobi(TestCase):
         assert_array_almost_equal(P3.c,array(p3c)/48.0,13)
 
 
-class TestShLegendre(TestCase):
+class TestShLegendre(object):
     def test_sh_legendre(self):
         # P*_n(x) = P_n(2x-1)
         psub = poly1d([2,-1])
@@ -211,7 +212,7 @@ class TestShLegendre(TestCase):
         assert_array_almost_equal(Ps5.c,pse5.c,12)
 
 
-class TestShChebyt(TestCase):
+class TestShChebyt(object):
     def test_sh_chebyt(self):
         # T*_n(x) = T_n(2x-1)
         psub = poly1d([2,-1])
@@ -235,7 +236,7 @@ class TestShChebyt(TestCase):
         assert_array_almost_equal(Ts5.c,tse5.c,12)
 
 
-class TestShChebyu(TestCase):
+class TestShChebyu(object):
     def test_sh_chebyu(self):
         # U*_n(x) = U_n(2x-1)
         psub = poly1d([2,-1])
@@ -258,7 +259,7 @@ class TestShChebyu(TestCase):
         assert_array_almost_equal(Us4.c,use4.c,12)
         assert_array_almost_equal(Us5.c,use5.c,11)
 
-class TestShJacobi(TestCase):
+class TestShJacobi(object):
 
     def test_sh_jacobi(self):
         # G^(p,q)_n(x) = n! gamma(n+p)/gamma(2*n+p) * P^(p-q,q-1)_n(2*x-1)
