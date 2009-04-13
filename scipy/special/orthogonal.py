@@ -87,14 +87,43 @@ from numpy import all, any, exp, inf, pi, sqrt
 from numpy.dual import eig
 
 # Local imports.
-import scipy.special._cephes as cephes
+import _cephes as cephes
 _gam = cephes.gamma
+_gamln = cephes.gammaln
 
 def poch(z,m):
     """Pochhammer symbol (z)_m = (z)(z+1)....(z+m-1) = gamma(z+m)/gamma(z)"""
     return _gam(z+m) / _gam(z)
 
 class orthopoly1d(np.poly1d):
+    """
+    Orthogonal polynomial.
+
+    Notes
+    -----
+    The orthogonal polynomial is evaluated using the Newton scheme.
+
+    Multiplying an `orthopoly1d` object by anything else than a
+    scalar, or adding or subtracting something returns a `poly1d`
+    object instead of a `orthopoly1d` object.
+    
+    .. warning::
+
+       Although `orthopoly1d` can evaluate high-order orthogonal polynomials
+       stably, `poly1d` typically **cannot**. This means that while
+
+       >>> scipy.special.chebyt(300)(0.9)
+       2.3995621039614016e+109
+
+       one has
+
+       >>> (scipy.special.chebyt(300) + 1)(0.9) - np.cos(300*np.arccos(0.9))
+       2.3995621039614016e+109
+
+       Note that the answer is 
+    
+    """
+    
     def __init__(self, roots_or_poly, weights=None, hn=1.0, kn=1.0, wfunc=None,
                  limits=None, monic=0):
         if isinstance(roots_or_poly, orthopoly1d):
@@ -131,7 +160,7 @@ class orthopoly1d(np.poly1d):
             kn = 1.0
         self.__dict__['normcoef'] = mu
         self.__dict__['roots'] = np.asarray(roots)
-        self.__dict__['prefactor'] = kn
+        self.__dict__['prefactor'] = np.float_(kn)
         self.__dict__['coeffs'] *= kn
 
     def __setitem__(self, key, value):
@@ -142,7 +171,8 @@ class orthopoly1d(np.poly1d):
         poly.__dict__['prefactor'] *= v
         poly.__dict__['normcoef'] *= v
         poly.__dict__['coeffs'] *= v
-        poly.__dict__['weights'][:,1] *= v
+        if poly.__dict__['weights'].shape[0] > 0:
+            poly.__dict__['weights'][:,1] *= v
         poly.__dict__['weight_func'] = lambda z: v*self.__['weight_func'](z)
         return poly
 
@@ -150,7 +180,7 @@ class orthopoly1d(np.poly1d):
         """
         Evaluate a polynomial with the Newton scheme
         """
-        x = np.atleast_1d(np.asarray(xp))
+        x = np.atleast_1d(xp)
         dx = x[:,None] - self.roots
         sgn_dx = np.sign(dx)
         abs_dx = abs(dx)
@@ -178,32 +208,25 @@ class orthopoly1d(np.poly1d):
         if np.isscalar(other):
             return self._mul_scalar(other)
         else:
-            return poly1d.__mul__(self, other)
+            return np.poly1d.__mul__(self, other)
 
     def __rmul__(self, other):
         if np.isscalar(other):
             return self._mul_scalar(other)
         else:
-            return poly1d.__rmul__(self, other)
-
-    def __pow__(self, val):
-        if not np.isscalar(val) or int(val) != val or val < 0:
-            raise ValueError, "Power to non-negative integers only."
-        roots = np.repeat(self.roots, val)
-        poly = orthopoly1d(roots, kn=self.prefactor**val)
-        return poly
+            return np.poly1d.__rmul__(self, other)
 
     def __div__(self, other):
         if np.isscalar(other):
             return self._mul_scalar(other)
         else:
-            return poly1d.__div__(self, other)
+            return np.poly1d.__div__(self, other)
 
     def __rdiv__(self, other):
         if np.isscalar(other):
             return self._mul_scalar(other)
         else:
-            return poly1d.__rdiv__(self, other)
+            return np.poly1d.__rdiv__(self, other)
 
 
 def gen_roots_and_weights(n,an_func,sqrt_bn_func,mu):
@@ -254,7 +277,8 @@ def j_roots(n,alpha,beta,mu=0):
         an_J = lambda k: np.where(k==0,(q-p)/(p+q+2.0),
                                (q*q - p*p)/((2.0*k+p+q)*(2.0*k+p+q+2)))
     g = cephes.gamma
-    mu0 = 2.0**(p+q+1)*g(p+1)*g(q+1)/(g(p+q+2))
+    mu0 = np.exp((p+q+1)*np.log(2.0) + _gamln(p+1) + _gamln(q+1)
+                 - _gamln(p+q+2))
     val = gen_roots_and_weights(n,an_J,sbn_J,mu0)
     if mu:
         return val + [mu0]
@@ -272,9 +296,11 @@ def jacobi(n,alpha,beta,monic=0):
         return orthopoly1d([],[],1.0,1.0,wfunc,(-1,1),monic)
     x,w,mu = j_roots(n,alpha,beta,mu=1)
     ab1 = alpha+beta+1.0
-    hn = 2**ab1/(2*n+ab1)*_gam(n+alpha+1)
-    hn *= _gam(n+beta+1.0) / _gam(n+1) / _gam(n+ab1)
-    kn = _gam(2*n+ab1)/2.0**n / _gam(n+1) / _gam(n+ab1)
+
+    hn = np.exp(ab1*np.log(2.0) - np.log(2*n+ab1)
+                + _gamln(n+alpha+1) + _gamln(n+beta+1)
+                - _gamln(n+1) - _gamln(n+ab1))
+    kn = np.exp(_gamln(2*n+ab1) - n*np.log(2.0) - _gamln(n+1) - _gamln(n+ab1))
     # here kn = coefficient on x^n term
     p = orthopoly1d(x,w,hn,kn,wfunc,(-1,1),monic)
     return p
@@ -303,9 +329,8 @@ def js_roots(n,p1,q1,mu=0):
     # could also use definition
     #  Gn(p,q,x) = constant_n * P^(p-q,q-1)_n(2x-1)
     #  so roots of Gn(p,q,x) are (roots of P^(p-q,q-1)_n + 1) / 2.0
-    g = _gam
     # integral of weight over interval
-    mu0 =  g(q)*g(p-q+1)/g(p+1)
+    mu0 =  np.exp(_gamln(q) + _gamln(p-q+1) - _gamln(p+1))
     val = gen_roots_and_weights(n,an_Js,sbn_Js,mu0)
     if mu:
         return val + [mu0]
@@ -331,8 +356,8 @@ def sh_jacobi(n, p, q, monic=0):
         return orthopoly1d([],[],1.0,1.0,wfunc,(-1,1),monic)
     n1 = n
     x,w,mu0 = js_roots(n1,p,q,mu=1)
-    hn = _gam(n+1)*_gam(n+q)*_gam(n+p)*_gam(n+p-q+1)
-    hn /= (2*n+p)*(_gam(2*n+p)**2)
+    hn = np.exp(_gamln(n+1) + _gamln(n+q) + _gamln(n+p) + _gamln(n+p-q+1)
+                - np.log(2*n+p) - 2*_gamln(2+n*p))
     # kn = 1.0 in standard form so monic is redundant.  Kept for compatibility.
     kn = 1.0
     p = orthopoly1d(x,w,hn,kn,wfunc=wfunc,limits=(0,1),monic=monic)
@@ -372,7 +397,7 @@ def genlaguerre(n,alpha,monic=0):
     x,w,mu0 = la_roots(n1,alpha,mu=1)
     wfunc = lambda x: exp(-x) * x**alpha
     if n==0: x,w = [],[]
-    hn = _gam(n+alpha+1)/_gam(n+1)
+    hn = np.exp(_gamln(n+alpha+1) - _gamln(n+1))
     kn = (-1)**n / _gam(n+1)
     p = orthopoly1d(x,w,hn,kn,wfunc,(0,inf),monic)
     return p
@@ -430,8 +455,8 @@ def hermite(n,monic=0):
     x,w,mu0 = h_roots(n1,mu=1)
     wfunc = lambda x: exp(-x*x)
     if n==0: x,w = [],[]
-    hn = 2**n * _gam(n+1)*sqrt(pi)
-    kn = 2**n
+    hn = 2.0**n * _gam(n+1)*sqrt(pi)
+    kn = 2.0**n
     p = orthopoly1d(x,w,hn,kn,wfunc,(-inf,inf),monic)
     return p
 
@@ -489,7 +514,8 @@ def gegenbauer(n,alpha,monic=0):
     if monic:
         return base
     #  Abrahmowitz and Stegan 22.5.20
-    factor = _gam(2*alpha+n)*_gam(alpha+0.5) / _gam(2*alpha) / _gam(alpha+0.5+n)
+    factor = np.exp(_gamln(2*alpha+n) + _gamln(alpha+0.5)
+                    - _gamln(2*alpha) - _gamln(alpha+0.5+n))
     return base * factor
 
 # Chebyshev of the first kind: T_n(x)  = n! sqrt(pi) / _gam(n+1./2)* P^(-1/2,-1/2)_n(x)
@@ -505,7 +531,6 @@ def t_roots(n,mu=0):
     # from recurrence relation
     sbn_J = lambda k: np.where(k==1,sqrt(2)/2.0,0.5)
     an_J = lambda k: 0.0*k
-    g = cephes.gamma
     mu0 = pi
     val = gen_roots_and_weights(n,an_J,sbn_J,mu0)
     if mu:
@@ -675,7 +700,7 @@ def legendre(n,monic=0):
     x,w,mu0 = p_roots(n1,mu=1)
     if n==0: x,w = [],[]
     hn = 2.0/(2*n+1)
-    kn = _gam(2*n+1)/_gam(n+1)**2 / 2.0**n
+    kn = np.exp(_gamln(2*n+1) - 2*_gamln(n+1) - n*np.log(2.0))
     p = orthopoly1d(x,w,hn,kn,wfunc=lambda x: 1.0,limits=(-1,1),monic=monic)
     return p
 
