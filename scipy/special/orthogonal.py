@@ -87,7 +87,7 @@ from numpy import all, any, exp, inf, pi, sqrt
 from numpy.dual import eig
 
 # Local imports.
-import _cephes as cephes
+import scipy.special._cephes as cephes
 _gam = cephes.gamma
 
 def poch(z,m):
@@ -95,18 +95,115 @@ def poch(z,m):
     return _gam(z+m) / _gam(z)
 
 class orthopoly1d(np.poly1d):
-    def __init__(self, roots, weights=None, hn=1.0, kn=1.0, wfunc=None, limits=None, monic=0):
+    def __init__(self, roots_or_poly, weights=None, hn=1.0, kn=1.0, wfunc=None,
+                 limits=None, monic=0):
+        if isinstance(roots_or_poly, orthopoly1d):
+            poly = roots_or_poly
+            self.__dict__['weights'] = poly.weights.copy()
+            self.__dict__['weight_func'] = poly.weight_func
+            self.__dict__['limits'] = poly.limits
+            self.__dict__['normcoef'] = poly.normcoef
+            if poly.__dict__['coeffs'] is not None:
+                self.__dict__['coeffs'] = poly.coeffs.copy()
+            self.__dict__['roots'] = poly.roots.copy()
+            self.__dict__['prefactor'] = poly.prefactor
+            self.__dict__['order'] = poly.order
+            self.__dict__['variable'] = poly.variable
+            return
+        else:
+            roots = roots_or_poly
+
+        self.__dict__['order'] = len(roots) - 1
+        self.__dict__['variable'] = 'x'
+
         np.poly1d.__init__(self, roots, r=1)
-        equiv_weights = [weights[k] / wfunc(roots[k]) for k in range(len(roots))]
-        self.__dict__['weights'] = np.array(zip(roots,weights,equiv_weights))
+
+        equiv_weights = [weights[k]/wfunc(roots[k])
+                         for k in range(len(roots))]
+        self.__dict__['weights'] = np.array(zip(roots, weights,
+                                                equiv_weights))
         self.__dict__['weight_func'] = wfunc
+
         self.__dict__['limits'] = limits
         mu = sqrt(hn)
         if monic:
             mu = mu / abs(kn)
             kn = 1.0
         self.__dict__['normcoef'] = mu
+        self.__dict__['roots'] = np.asarray(roots)
+        self.__dict__['prefactor'] = kn
         self.__dict__['coeffs'] *= kn
+
+    def __setitem__(self, key, value):
+        raise KeyError("Orthogonal polynomial coefficients cannot be altered")
+
+    def _mul_scalar(self, v):
+        poly = orthopoly1d(self)
+        poly.__dict__['prefactor'] *= v
+        poly.__dict__['normcoef'] *= v
+        poly.__dict__['coeffs'] *= v
+        poly.__dict__['weights'][:,1] *= v
+        poly.__dict__['weight_func'] = lambda z: v*self.__['weight_func'](z)
+        return poly
+
+    def __call__(self, xp):
+        """
+        Evaluate a polynomial with the Newton scheme
+        """
+        x = np.atleast_1d(np.asarray(xp))
+        dx = x[:,None] - self.roots
+        sgn_dx = np.sign(dx)
+        abs_dx = abs(dx)
+
+        sums = np.log(abs_dx).sum(axis=-1)
+        r = self.prefactor * np.exp(sums) * np.prod(sgn_dx, axis=-1)
+
+        try:
+            return xp.__array_wrap__(r).reshape(xp.shape)
+        except AttributeError:
+            return r.reshape(np.asanyarray(xp).shape)
+
+    def __repr__(self):
+        vals = repr(self.coeffs)
+        vals = vals[6:-1]
+        return "orthopoly1d(%s)" % vals
+    
+    def __neg__(self):
+        return self._mul_scalar(-1)
+
+    def __pos__(self):
+        return self
+
+    def __mul__(self, other):
+        if np.isscalar(other):
+            return self._mul_scalar(other)
+        else:
+            return poly1d.__mul__(self, other)
+
+    def __rmul__(self, other):
+        if np.isscalar(other):
+            return self._mul_scalar(other)
+        else:
+            return poly1d.__rmul__(self, other)
+
+    def __pow__(self, val):
+        if not np.isscalar(val) or int(val) != val or val < 0:
+            raise ValueError, "Power to non-negative integers only."
+        roots = np.repeat(self.roots, val)
+        poly = orthopoly1d(roots, kn=self.prefactor**val)
+        return poly
+
+    def __div__(self, other):
+        if np.isscalar(other):
+            return self._mul_scalar(other)
+        else:
+            return poly1d.__div__(self, other)
+
+    def __rdiv__(self, other):
+        if np.isscalar(other):
+            return self._mul_scalar(other)
+        else:
+            return poly1d.__rdiv__(self, other)
 
 
 def gen_roots_and_weights(n,an_func,sqrt_bn_func,mu):
