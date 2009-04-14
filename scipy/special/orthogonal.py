@@ -167,6 +167,10 @@ class orthopoly1d(np.poly1d):
         raise KeyError("Orthogonal polynomial coefficients cannot be altered")
 
     def _mul_scalar(self, v):
+        v = np.asanyarray(v)
+        if v.size != 1 or v.ndim > 1:
+            raise ValueError()
+
         poly = orthopoly1d(self)
         poly.__dict__['prefactor'] *= v
         poly.__dict__['normcoef'] *= v
@@ -180,6 +184,9 @@ class orthopoly1d(np.poly1d):
         """
         Evaluate a polynomial with the Newton scheme
         """
+        if isinstance(xp, np.poly1d):
+            return np.poly1d.__call__(self, xp)
+
         x = np.atleast_1d(xp)
         dx = x[:,None] - self.roots
         sgn_dx = np.sign(dx)
@@ -205,27 +212,27 @@ class orthopoly1d(np.poly1d):
         return self
 
     def __mul__(self, other):
-        if np.isscalar(other):
+        try:
             return self._mul_scalar(other)
-        else:
+        except ValueError:
             return np.poly1d.__mul__(self, other)
 
     def __rmul__(self, other):
-        if np.isscalar(other):
+        try:
             return self._mul_scalar(other)
-        else:
+        except ValueError:
             return np.poly1d.__rmul__(self, other)
 
     def __div__(self, other):
-        if np.isscalar(other):
+        try:
             return self._mul_scalar(other)
-        else:
+        except ValueError:
             return np.poly1d.__div__(self, other)
 
     def __rdiv__(self, other):
-        if np.isscalar(other):
+        try:
             return self._mul_scalar(other)
-        else:
+        except ValueError:
             return np.poly1d.__rdiv__(self, other)
 
 
