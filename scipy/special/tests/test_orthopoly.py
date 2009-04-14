@@ -1,6 +1,7 @@
 """
 Orthogonal polynomials
 """
+import numpy as np
 from numpy.testing import *
 
 from test_basic import assert_tol_equal
@@ -298,3 +299,26 @@ class TestShJacobi(object):
         assert_array_almost_equal(G3.c,ge3.c,13)
         assert_array_almost_equal(G4.c,ge4.c,13)
         assert_array_almost_equal(G5.c,ge5.c,13)
+
+
+def test_vs_coefs():
+    # Check that the Newton evaluation of the polynomials is equivalent to
+    # the Horner one
+
+    def items():
+        ggb = lambda n: gegenbauer(n, 0.34134)
+        genlag = lambda n: genlaguerre(n, 0.34134)
+        jac = lambda n: jacobi(n, 0.343, 0.321)
+        sh_jac = lambda n: sh_jacobi(n, 0.343, 0.321)
+        for func in [chebyc, chebys, chebyt, chebyu,
+                     ggb, hermite, hermitenorm, laguerre, genlag,
+                     legendre, jac, sh_legendre, sh_chebyu,
+                     sh_jac]:
+            for order in xrange(0, 6):
+                for x in [-0.5, 0.8, 1.7]:
+                    yield func, order, x
+
+    for func, order, x in items():
+        p = func(order)
+        assert_tol_equal(p(x), np.poly1d(p)(x), atol=1e-12)
+
