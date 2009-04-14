@@ -166,10 +166,12 @@ class orthopoly1d(np.poly1d):
     def __setitem__(self, key, value):
         raise KeyError("Orthogonal polynomial coefficients cannot be altered")
 
-    def _mul_scalar(self, v):
+    def _mul_scalar(self, v, inverse=False):
         v = np.asanyarray(v)
         if v.size != 1 or v.ndim > 1:
             raise ValueError()
+        if inverse:
+            v = 1.0/v
 
         poly = orthopoly1d(self)
         poly.__dict__['prefactor'] *= v
@@ -225,13 +227,13 @@ class orthopoly1d(np.poly1d):
 
     def __div__(self, other):
         try:
-            return self._mul_scalar(other)
+            return self._mul_scalar(other, True)
         except ValueError:
             return np.poly1d.__div__(self, other)
 
     def __rdiv__(self, other):
         try:
-            return self._mul_scalar(other)
+            return self._mul_scalar(other, True)
         except ValueError:
             return np.poly1d.__rdiv__(self, other)
 
