@@ -67,24 +67,31 @@ class TestCheby(object):
 class TestGegenbauer(object):
 
     def test_gegenbauer(self):
-        a = 5*rand()-0.5
-        if any(a==0): a = -0.2
-        Ca0 = gegenbauer(0,a)
-        Ca1 = gegenbauer(1,a)
-        Ca2 = gegenbauer(2,a)
-        Ca3 = gegenbauer(3,a)
-        Ca4 = gegenbauer(4,a)
-        Ca5 = gegenbauer(5,a)
+        random.seed(123)
+        for k in xrange(30):
+            a = 5*random.rand()-0.5
+            if any(a==0): a = -0.2
+            Ca0 = gegenbauer(0,a)
+            Ca1 = gegenbauer(1,a)
+            Ca2 = gegenbauer(2,a)
+            Ca3 = gegenbauer(3,a)
+            Ca4 = gegenbauer(4,a)
+            Ca5 = gegenbauer(5,a)
 
-        assert_array_almost_equal(Ca0.c,array([1]),13)
-        assert_array_almost_equal(Ca1.c,array([2*a,0]),13)
-        assert_array_almost_equal(Ca2.c,array([2*a*(a+1),0,-a]),13)
-        assert_array_almost_equal(Ca3.c,array([4*poch(a,3),0,-6*a*(a+1),
-                                               0])/3.0,11)
-        assert_array_almost_equal(Ca4.c,array([4*poch(a,4),0,-12*poch(a,3),
-                                               0,3*a*(a+1)])/6.0,11)
-        assert_array_almost_equal(Ca5.c,array([4*poch(a,5),0,-20*poch(a,4),
-                                               0,15*poch(a,3),0])/15.0,11)
+            atol = 1e-11
+            
+            assert_tol_equal(Ca0.c,array([1]),13, atol=atol)
+            assert_tol_equal(Ca1.c,array([2*a,0]),13, atol=atol)
+            assert_tol_equal(Ca2.c,array([2*a*(a+1),0,-a]),13, atol=atol)
+            assert_tol_equal(Ca3.c,array([4*poch(a,3),0,-6*a*(a+1),
+                                          0])/3.0,11,
+                             atol=atol)
+            assert_tol_equal(Ca4.c,array([4*poch(a,4),0,-12*poch(a,3),
+                                          0,3*a*(a+1)])/6.0,11,
+                             atol=atol)
+            assert_tol_equal(Ca5.c,array([4*poch(a,5),0,-20*poch(a,4),
+                                          0,15*poch(a,3),0])/15.0,11,
+                             atol=atol)
 
 
 class TestHermite(object):
@@ -163,29 +170,33 @@ class TestLegendre(object):
         leg5 = legendre(5)
         assert_equal(leg0.c,[1])
         assert_equal(leg1.c,[1,0])
-        assert_equal(leg2.c,array([3,0,-1])/2.0)
-        assert_almost_equal(leg3.c,array([5,0,-3,0])/2.0)
-        assert_almost_equal(leg4.c,array([35,0,-30,0,3])/8.0)
-        assert_almost_equal(leg5.c,array([63,0,-70,0,15,0])/8.0)
+        assert_tol_equal(leg2.c,array([3,0,-1])/2.0, atol=1e-15)
+        assert_tol_equal(leg3.c,array([5,0,-3,0])/2.0, atol=1e-15)
+        assert_tol_equal(leg4.c,array([35,0,-30,0,3])/8.0, atol=1e-15)
+        assert_tol_equal(leg5.c,array([63,0,-70,0,15,0])/8.0, atol=1e-14)
 
 class TestJacobi(object):
     def test_jacobi(self):
-        a = 5*rand() - 1
-        b = 5*rand() - 1
-        P0 = jacobi(0,a,b)
-        P1 = jacobi(1,a,b)
-        P2 = jacobi(2,a,b)
-        P3 = jacobi(3,a,b)
+        random.seed(123)
+        for k in xrange(30):
+            a = 5*random.rand() - 1
+            b = 5*random.rand() - 1
+            P0 = jacobi(0,a,b)
+            P1 = jacobi(1,a,b)
+            P2 = jacobi(2,a,b)
+            P3 = jacobi(3,a,b)
 
-        assert_array_almost_equal(P0.c,[1],13)
-        assert_array_almost_equal(P1.c,array([a+b+2,a-b])/2.0,13)
-        cp = [(a+b+3)*(a+b+4), 4*(a+b+3)*(a+2), 4*(a+1)*(a+2)]
-        p2c = [cp[0],cp[1]-2*cp[0],cp[2]-cp[1]+cp[0]]
-        assert_array_almost_equal(P2.c,array(p2c)/8.0,13)
-        cp = [(a+b+4)*(a+b+5)*(a+b+6),6*(a+b+4)*(a+b+5)*(a+3),
-              12*(a+b+4)*(a+2)*(a+3),8*(a+1)*(a+2)*(a+3)]
-        p3c = [cp[0],cp[1]-3*cp[0],cp[2]-2*cp[1]+3*cp[0],cp[3]-cp[2]+cp[1]-cp[0]]
-        assert_array_almost_equal(P3.c,array(p3c)/48.0,13)
+            atol = 1e-11
+
+            assert_tol_equal(P0.c,[1],13, atol=atol)
+            assert_tol_equal(P1.c,array([a+b+2,a-b])/2.0,13, atol=atol)
+            cp = [(a+b+3)*(a+b+4), 4*(a+b+3)*(a+2), 4*(a+1)*(a+2)]
+            p2c = [cp[0],cp[1]-2*cp[0],cp[2]-cp[1]+cp[0]]
+            assert_tol_equal(P2.c,array(p2c)/8.0,13, atol=atol)
+            cp = [(a+b+4)*(a+b+5)*(a+b+6),6*(a+b+4)*(a+b+5)*(a+3),
+                  12*(a+b+4)*(a+2)*(a+3),8*(a+1)*(a+2)*(a+3)]
+            p3c = [cp[0],cp[1]-3*cp[0],cp[2]-2*cp[1]+3*cp[0],cp[3]-cp[2]+cp[1]-cp[0]]
+            assert_tol_equal(P3.c,array(p3c)/48.0,13, atol=atol)
 
 
 class TestShLegendre(object):
@@ -263,7 +274,7 @@ class TestShJacobi(object):
 
     def test_sh_jacobi(self):
         # G^(p,q)_n(x) = n! gamma(n+p)/gamma(2*n+p) * P^(p-q,q-1)_n(2*x-1)
-        conv = lambda n,p: _gam(n+1)*_gam(n+p)/_gam(2*n+p)
+        conv = lambda n,p: gamma(n+1)*gamma(n+p)/gamma(2*n+p)
         psub = poly1d([2,-1])
         q = 4*rand()
         p = q-1 + 2*rand()
