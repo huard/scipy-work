@@ -52,9 +52,11 @@ import math
 import numpy as np
 from numpy.linalg import norm, solve
 from numpy import asarray, dot, vdot
+import scipy.sparse.linalg
+import minpack2
 
 __all__ = ['broyden1', 'broyden2', 'anderson', 'linearmixing',
-           'vackar', 'excitingmixing']
+           'vackar', 'excitingmixing', 'newton_krylov']
 
 #------------------------------------------------------------------------------
 # Utility functions
@@ -83,17 +85,15 @@ def _array_like(x, x0):
 # Generic nonlinear solver machinery
 #------------------------------------------------------------------------------
 
-def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
-                 maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None, line_search=True):
-    """%s
-    Parameters
-    ----------
+_doc_parts = dict(
+    params_basic="""
     F : function(x) -> f
         Function whose root to find; should take and return an array-like
         object.
     x0 : array-like
-        Initial guess for the solution%s
+        Initial guess for the solution
+    """.strip(),
+    params_extra="""
     iter : int, optional
         Number of iterations to make. If omitted (default), make as many
         as required to meet tolerances.
@@ -118,7 +118,43 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
     line_search : bool, optional
         Whether to make a line search to determine the step size in the
         direction given by the Jacobian approximation. Defaults to ``True``.
+    callback : function, optional
+        Optional callback function. It is called on every iteration as
+        ``callback(x, f)`` where `x` is the current solution and `f`
+        the corresponding residual.
 
+    Returns
+    -------
+    sol : array-like
+        An array (of similar array type as `x0`) containing the final solution.
+
+    Raises
+    ------
+    NoConvergence
+        When a solution was not found.
+
+    """.strip()
+)
+
+def _set_doc(obj):
+    if obj.__doc__:
+        obj.__doc__ = obj.__doc__ % _doc_parts
+
+def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
+                 maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
+                 tol_norm=None, line_search=True,
+                 callback=None):
+    """
+    Find a root of a function, using given Jacobian approximation.
+
+    Parameters
+    ----------
+    %(params_basic)s
+    jacobian_factory : function(x0, f0, func)
+        Callable that constructs a Jacobian approximation. It is passed
+        the initial guess `x0`, the initial residual `f0` and a function
+        object `func` that evaluates the residual.
+    %(params_extra)s
     """
 
     condition = TerminationCondition(f_tol=f_tol, f_rtol=f_rtol,
@@ -130,7 +166,7 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
 
     dx = np.inf
     Fx = func(x)
-    jacobian = jacobian_factory(x.copy(), Fx)
+    jacobian = jacobian_factory(x.copy(), Fx, func)
 
     if maxiter is None:
         if iter is not None:
@@ -149,6 +185,10 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
             # XXX: Ensuring descent direction would be useful here?
             dx = -jacobian.solve(Fx)
 
+            if abs(dx).max() == 0:
+                # Jacobian was faulty, fall back to gradient direction
+                dx = -Fx
+
             # Line search for Wolfe conditions for an objective function
             s = _line_search(func, x, dx)
             step = dx*s
@@ -159,6 +199,9 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
         Fx = func(x)
         jacobian.update(x.copy(), Fx)
 
+        if callback:
+            callback(x, Fx)
+
         if verbose:
             print "%d:  |F(x)|=%g" % (n, norm(Fx))
     else:
@@ -166,7 +209,7 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
 
     return _array_like(x, x0)
 
-import minpack2
+_set_doc(nonlin_solve)
 
 def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     """
@@ -236,7 +279,7 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     return stp
 
 class Jacobian(object):
-    def __init__(self, x0, f0, **kw):
+    def __init__(self, x0, f0, func, **kw):
         raise NotImplementedError
     def solve(self, rhs):
         raise NotImplementedError
@@ -304,7 +347,7 @@ class TerminationCondition(object):
 #------------------------------------------------------------------------------
 
 class GenericBroyden(Jacobian):
-    def __init__(self, x0, f0):
+    def __init__(self, x0, f0, func):
         self.last_f = f0
         self.last_x = x0
 
@@ -319,16 +362,21 @@ class GenericBroyden(Jacobian):
         self.last_x = x
 
 class BroydenFirst(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
+    """
     Find a root of a function, using Broyden's first Jacobian approximation.
 
     This method is also known as \"Broyden's good method\".
-    """, """
+
+    Parameters
+    ----------
+    %(params_basic)s
     alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).""")
-    
-    def __init__(self, x0, f0, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0)
+        Initial guess for the Jacobian is (-1/alpha).
+    %(params_extra)s
+    """
+
+    def __init__(self, x0, f0, func, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0, func)
         self.Gm = -alpha * np.identity(x0.size)
 
     def solve(self, f):
@@ -338,18 +386,23 @@ class BroydenFirst(GenericBroyden):
         s = dot(self.Gm.T, dx)
         y = dot(self.Gm, df)
         self.Gm += (dx - y)[:,None] * s[None,:] / dot(dx, y)
-
+        
 class BroydenSecond(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
+    """
     Find a root of a function, using Broyden\'s second Jacobian approximation.
 
     This method is also known as \"Broyden's bad method\".
-    """, """
+
+    Parameters
+    ----------
+    %(params_basic)s
     alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).""")
-    
-    def __init__(self, x0, f0, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0)
+        Initial guess for the Jacobian is (-1/alpha).
+    %(params_extra)s
+    """
+
+    def __init__(self, x0, f0, func, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0, func)
         self.Gm = -alpha * np.identity(x0.size)
 
     def solve(self, f):
@@ -357,13 +410,13 @@ class BroydenSecond(GenericBroyden):
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
-
+        
 #------------------------------------------------------------------------------
 # Broyden-like (restricted memory)
 #------------------------------------------------------------------------------
 
 class Anderson(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
+    """
     Find a root of a function, using (extended) Anderson mixing.
 
     The jacobian is formed by for a 'best' solution in the space
@@ -372,17 +425,21 @@ class Anderson(GenericBroyden):
 
     .. [Ey] V. Eyert, J. Comp. Phys., 124, 271 (1996).
 
-    """, """
+    Parameters
+    ----------
+    %(params_basic)s
     alpha : float, optional
         Initial guess for the Jacobian is (-1/alpha).
     M : float, optional
         Number of previous vectors to retain. Defaults to 5.
     w0 : float, optional
         Regularization parameter for numerical stability.
-        Compared to unity, good values of the order of 0.01.""")
+        Compared to unity, good values of the order of 0.01.
+    %(params_extra)s
+    """
 
-    def __init__(self, x0, f0, alpha=0.1, w0=0.01, M=5):
-        GenericBroyden.__init__(self, x0, f0)
+    def __init__(self, x0, f0, func, alpha=0.1, w0=0.01, M=5):
+        GenericBroyden.__init__(self, x0, f0, func)
         self.alpha = alpha
         self.M = M
         self.dx = []
@@ -436,7 +493,7 @@ class Anderson(GenericBroyden):
 #------------------------------------------------------------------------------
 
 class Vackar(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
+    """
     Find a root of a function, using diagonal Broyden Jacobian approximation.
     
     The Jacobian approximation is derived from previous iterations, by
@@ -448,12 +505,16 @@ class Vackar(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """, """
+    Parameters
+    ----------
+    %(params_basic)s
     alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).""")
+        Initial guess for the Jacobian is (-1/alpha).
+    %(params_extra)s
+    """
 
-    def __init__(self, x0, f0, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0)
+    def __init__(self, x0, f0, func, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0, func)
         self.d = np.ones_like(x0)/alpha
 
     def solve(self, f):
@@ -463,7 +524,7 @@ class Vackar(GenericBroyden):
         self.d -= (df + self.d*dx)*dx/dx_norm**2
 
 class LinearMixing(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
+    """
     Find a root of a function, using a scalar Jacobian approximation.
 
     .. warning::
@@ -472,12 +533,16 @@ class LinearMixing(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """, """
+    Parameters
+    ----------
+    %(params_basic)s
     alpha : float, optional
-        The Jacobian approximation is (-1/alpha).""")
+        The Jacobian approximation is (-1/alpha).
+    %(params_extra)s
+    """
 
-    def __init__(self, x0, f0, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0)
+    def __init__(self, x0, f0, func, alpha=0.1):
+        GenericBroyden.__init__(self, x0, f0, func)
         self.alpha = alpha
 
     def solve(self, f):
@@ -487,7 +552,7 @@ class LinearMixing(GenericBroyden):
         pass
 
 class ExcitingMixing(GenericBroyden):
-    __doc__ = nonlin_solve.__doc__ % ("""
+    """
     Find a root of a function, using a tuned diagonal Jacobian approximation.
 
     The Jacobian matrix is diagonal and is tuned on each iteration.
@@ -498,15 +563,19 @@ class ExcitingMixing(GenericBroyden):
        general root finding. It may be useful for specific problems,
        but whether it will work may depend strongly on the problem.
 
-    """, """
+    Parameters
+    ----------
+    %(params_basic)s
     alpha : float, optional
         Initial Jacobian approximation is (-1/alpha).
     alphamax : float, optional
         The entries of the diagonal Jacobian are kept in the range
-        ``[alpha, alphamax]``.""")
+        ``[alpha, alphamax]``.
+    %(params_extra)s
+    """
 
-    def __init__(self, x0, f0, alpha=0.1, alphamax=1.0):
-        GenericBroyden.__init__(self, x0, f0)
+    def __init__(self, x0, f0, func, alpha=0.1, alphamax=1.0):
+        GenericBroyden.__init__(self, x0, f0, func)
         self.alpha = alpha
         self.alphamax = alphamax
         self.beta = alpha*np.ones_like(x0)
@@ -519,6 +588,89 @@ class ExcitingMixing(GenericBroyden):
         self.beta[incr] += self.alpha
         self.beta[~incr] = self.alpha
         np.clip(self.beta, 0, self.alphamax, out=self.beta)
+
+
+#------------------------------------------------------------------------------
+# Iterative/Krylov approximated Jacobians
+#------------------------------------------------------------------------------
+
+class KrylovJacobian(Jacobian):
+    """
+    Find a root of a function, using Krylov approximation for inverse Jacobian.
+
+    This method is suitable for solving large-scale problems.
+
+    Parameters
+    ----------
+    %(params_basic)s
+    rdiff : float, optional
+        Relative step size to use in numerical differentiation.
+    method : {'gmres', 'bicgstab', 'cgs', 'minres'} or function
+        Krylov method to use to approximate the Jacobian.
+        Can be a string, or a function implementing the same interface as
+        the iterative solvers in `scipy.sparse.linalg`.
+    inner_tol, inner_maxiter, inner_M, ...
+        Parameters to pass on to the \"inner\" Krylov solver.
+    %(params_extra)s
+
+    Notes
+    -----
+    Jacobian-vector products are approximated with numerical differentiation:
+    ``J v ~ (f(x + omega*v/|v|) - f(x)) / omega``.
+
+    References
+    ----------
+    For a review on Newton-Krylov methods, see for example [KK]_.
+
+    .. [KK] D.A. Knoll and D.E. Keyes, J. Comp. Phys. 193, 357 (2003).
+
+    """
+
+    def __init__(self, x0, f0, func, rdiff=None,
+                 method='gmres',
+                 inner_tol=1e-6, inner_maxiter=50, **kw):
+        self.x0 = x0
+        self.f0 = f0
+        self.func = func
+
+        if rdiff is None:
+            rdiff = np.finfo(x0.dtype).eps ** (1./2)
+
+        self.rdiff = rdiff
+        self.method = dict(
+            bicgstab=scipy.sparse.linalg.bicgstab,
+            gmres=scipy.sparse.linalg.gmres,
+            cgs=scipy.sparse.linalg.cgs,
+            minres=scipy.sparse.linalg.minres,
+            ).get(method, method)
+        
+        self.method_kw = dict(tol=inner_tol, maxiter=inner_maxiter)
+        for key, value in kw.items():
+            if not key.startswith('inner_'):
+                raise ValueError("Unknown parameter %s" % key)
+            self.method_kw[key[6:]] = value
+
+        self.op = scipy.sparse.linalg.LinearOperator(
+            shape=(f0.size, x0.size), matvec=self._mul, dtype=self.f0.dtype)
+        self._update_diff_step()
+
+    def _update_diff_step(self):
+        mx = abs(self.x0).max()
+        mf = abs(self.f0).max()
+        self.omega = self.rdiff * max(1, mx) / max(1, mf)
+
+    def _mul(self, v):
+        sc = self.omega / norm(v)
+        return (self.func(self.x0 + sc*v) - self.f0) / sc
+
+    def solve(self, rhs):
+        sol, info = self.method(self.op, rhs)
+        return sol
+
+    def update(self, x, f):
+        self.x0 = x
+        self.f0 = f
+        self._update_diff_step()
 
 #------------------------------------------------------------------------------
 # Wrapper functions
@@ -538,7 +690,7 @@ def _broyden_wrapper(name, jac):
     wrapper = ("def %s(F, xin, iter=None %s, verbose=False, maxiter=None, "
                "f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, "
                "tol_norm=None, line_search=True):\n"
-               "    jac = lambda x, f: %s(x, f %s)\n"
+               "    jac = lambda x, f, func: %s(x, f, func %s)\n"
                "    return nonlin_solve(F, xin, jac, iter, verbose, maxiter,\n"
                "        f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search)")
     wrapper = wrapper % (name, kw_str, jac.__name__, kwkw_str)
@@ -547,6 +699,7 @@ def _broyden_wrapper(name, jac):
     exec wrapper in ns
     func = ns[name]
     func.__doc__ = jac.__doc__
+    _set_doc(func)
     return func
 
 broyden1 = _broyden_wrapper('broyden1', BroydenFirst)
@@ -557,3 +710,5 @@ anderson = _broyden_wrapper('anderson', Anderson)
 linearmixing = _broyden_wrapper('linearmixing', LinearMixing)
 vackar = _broyden_wrapper('vackar', Vackar)
 excitingmixing = _broyden_wrapper('excitingmixing', ExcitingMixing)
+
+newton_krylov = _broyden_wrapper('newton_krylov', KrylovJacobian)

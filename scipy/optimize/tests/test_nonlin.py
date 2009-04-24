@@ -10,7 +10,7 @@ from numpy import matrix, diag, dot
 from numpy.linalg import inv
 import numpy as np
 
-BROYDEN = [nonlin.broyden1, nonlin.broyden2]
+BROYDEN = [nonlin.broyden1, nonlin.broyden2, nonlin.newton_krylov]
 OTHER = [nonlin.anderson, nonlin.vackar, nonlin.linearmixing,
          nonlin.excitingmixing]
 
@@ -85,7 +85,7 @@ class TestSecant(TestCase):
         Check that the given Jacobian approximation satisfies secant
         conditions for last `npoints` points.
         """
-        jac = jac_cls(self.xs[0], self.fs[0], **kw)
+        jac = jac_cls(self.xs[0], self.fs[0], None, **kw)
         for j, (x, f) in enumerate(zip(self.xs[1:], self.fs[1:])):
             jac.update(x, f)
 
@@ -108,7 +108,7 @@ class TestSecant(TestCase):
 
     def test_broyden1_sherman_morrison(self):
         # Check that BroydenFirst is as expected for the 1st iteration
-        jac = nonlin.BroydenFirst(self.xs[0], self.fs[0], alpha=0.1)
+        jac = nonlin.BroydenFirst(self.xs[0], self.fs[0], None, alpha=0.1)
         jac.update(self.xs[1], self.fs[1])
 
         df = self.fs[1] - self.fs[0]
