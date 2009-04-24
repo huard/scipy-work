@@ -47,6 +47,8 @@ Simple iterations:
    excitingmixing
 
 """
+# Copyright (C) 2009, Pauli Virtanen <pav@iki.fi>
+# Distributed under the same license as Scipy.
 
 import math
 import numpy as np
