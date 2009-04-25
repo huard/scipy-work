@@ -11,22 +11,25 @@ should return F(x), which should be array-like.
 Example:
 
 >>> def F(x):
-...    '''Should converge to x=[0,0,0,0,0]'''
-...    import numpy
-...    d = numpy.array([3,2,1.5,1,0.5])
+...    \"\"\"Should converge to x=[0,0,0,0,0]\"\"\"
+...    d = [3,2,1.5,1,0.5]
 ...    c = 0.01
-...    return -d*numpy.array(x)-c*numpy.array(x)**3
+...    return -d * x - c*x**3
 
->>> from scipy import optimize
->>> x = optimize.broyden2(F,[1,1,1,1,1])
-
-All solvers have the parameter iter (the number of iterations to compute), some
-of them have other parameters of the solver, see the particular solver for
-details.
+>>> import scipy.optimize
+>>> x = scipy.optimize.broyden2(F, [1,1,1,1,1])
 
 
 Methods
 -------
+
+Large-scale nonlinear solvers:
+
+.. autosummary:
+   :toctree:
+
+   newton_krylov
+   anderson
 
 General nonlinear solvers:
 
@@ -35,16 +38,15 @@ General nonlinear solvers:
 
    broyden1
    broyden2
-   anderson
 
 Simple iterations:
 
 .. autosummary::
    :toctree:
 
+   excitingmixing
    linearmixing
    vackar
-   excitingmixing
 
 """
 # Copyright (C) 2009, Pauli Virtanen <pav@iki.fi>
@@ -57,8 +59,12 @@ from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
 import minpack2
 
-__all__ = ['broyden1', 'broyden2', 'anderson', 'linearmixing',
-           'vackar', 'excitingmixing', 'newton_krylov']
+__all__ = [
+    'broyden1', 'broyden2', 'anderson', 'linearmixing',
+    'vackar', 'excitingmixing', 'newton_krylov',
+    # Deprecated functions:
+    'broyden_generalized', 'broyden1_modified', 'broyden_modified',
+    'anderson2', 'broyden3',]
 
 #------------------------------------------------------------------------------
 # Utility functions
@@ -730,7 +736,15 @@ class KrylovJacobian(Jacobian):
 # Wrapper functions
 #------------------------------------------------------------------------------
 
-def _broyden_wrapper(name, jac):
+def _nonlin_wrapper(name, jac):
+    """
+    Construct a solver wrapper with given name and jacobian approx.
+
+    It inspects the keyword arguments of ``jac.__init__``, and allows to
+    use the same arguments in the wrapper function, in addition to the
+    keyword arguments of `nonlin_solve`
+
+    """
     import inspect
     args, varargs, varkw, defaults = inspect.getargspec(jac.__init__)
     kwargs = dict(zip(args[-len(defaults):], defaults))
@@ -741,13 +755,18 @@ def _broyden_wrapper(name, jac):
     if kwkw_str:
         kwkw_str = ", " + kwkw_str
 
-    wrapper = ("def %s(F, xin, iter=None %s, verbose=False, maxiter=None, "
-               "f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, "
-               "tol_norm=None, line_search=True):\n"
-               "    jac = lambda x, f, func: %s(x, f, func %s)\n"
-               "    return nonlin_solve(F, xin, jac, iter, verbose, maxiter,\n"
-               "        f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search)")
-    wrapper = wrapper % (name, kw_str, jac.__name__, kwkw_str)
+    # Construct the wrapper function so that it's keyword arguments
+    # are visible in pydoc.help etc.
+    wrapper = """
+def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
+             f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
+             tol_norm=None, line_search=True):
+    jac = lambda x, f, func: %(jac)s(x, f, func %(kwkw)s)
+    return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
+                        f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search)
+"""
+    wrapper = wrapper % dict(name=name, kw=kw_str, jac=jac.__name__,
+                             kwkw=kwkw_str)
     ns = {}
     ns.update(globals())
     exec wrapper in ns
@@ -756,13 +775,39 @@ def _broyden_wrapper(name, jac):
     _set_doc(func)
     return func
 
-broyden1 = _broyden_wrapper('broyden1', BroydenFirst)
-broyden2 = _broyden_wrapper('broyden2', BroydenSecond)
+broyden1 = _nonlin_wrapper('broyden1', BroydenFirst)
+broyden2 = _nonlin_wrapper('broyden2', BroydenSecond)
+anderson = _nonlin_wrapper('anderson', Anderson)
+linearmixing = _nonlin_wrapper('linearmixing', LinearMixing)
+vackar = _nonlin_wrapper('vackar', Vackar)
+excitingmixing = _nonlin_wrapper('excitingmixing', ExcitingMixing)
+newton_krylov = _nonlin_wrapper('newton_krylov', KrylovJacobian)
 
-anderson = _broyden_wrapper('anderson', Anderson)
 
-linearmixing = _broyden_wrapper('linearmixing', LinearMixing)
-vackar = _broyden_wrapper('vackar', Vackar)
-excitingmixing = _broyden_wrapper('excitingmixing', ExcitingMixing)
+# Deprecated functions
 
-newton_krylov = _broyden_wrapper('newton_krylov', KrylovJacobian)
+@np.deprecate
+def broyden_generalized(*a, **kw):
+    """Use anderson(..., w0=0) instead"""
+    kw.setdefault('w0', 0)
+    return anderson(*a, **kw)
+
+@np.deprecate
+def broyden1_modified(*a, **kw):
+    """Use broyden1 instead"""
+    return broyden1(*a, **kw)
+
+@np.deprecate
+def broyden_modified(*a, **kw):
+    """Use anderson instead"""
+    return anderson(*a, **kw)
+
+@np.deprecate
+def anderson2(*a, **kw):
+    """anderson2 was faulty; use anderson instead"""
+    return anderson(*a, **kw)
+
+@np.deprecate
+def broyden3(*a, **kw):
+    """Use broyden2 instead"""
+    return broyden2(*a, **kw)
