@@ -58,7 +58,7 @@ import scipy.sparse.linalg
 import minpack2
 
 __all__ = ['broyden1', 'broyden2', 'anderson', 'linearmixing',
-           'vackar', 'excitingmixing', 'newton_krylov']
+           'vackar', 'excitingmixing', 'newton_krylov', 'newton_lgmres']
 
 #------------------------------------------------------------------------------
 # Utility functions
@@ -600,8 +600,6 @@ class KrylovJacobian(Jacobian):
     """
     Find a root of a function, using Krylov approximation for inverse Jacobian.
 
-    This method is suitable for solving large-scale problems.
-
     Parameters
     ----------
     %(params_basic)s
@@ -615,22 +613,34 @@ class KrylovJacobian(Jacobian):
         Parameters to pass on to the \"inner\" Krylov solver.
     %(params_extra)s
 
+    See Also
+    --------
+    scipy.sparse.linalg.gmres
+
     Notes
     -----
-    Jacobian-vector products are approximated with numerical differentiation:
-    ``J v ~ (f(x + omega*v/|v|) - f(x)) / omega``.
+    This function implements a Newton-Krylov solver. The basic idea is
+    to compute the inverse of the Jacobian with an iterative Krylov
+    method. These methods require only evaluating the Jacobian-vector
+    products, which are conveniently approximated by numerical
+    differentiation:
+
+    .. math:: J v \approx (f(x + \omega*v/|v|) - f(x)) / \omega
+
+    Due to the use of iterative matrix inverses, these methods can
+    deal with large-scale problems.
+
+    For a review on Newton-Krylov methods, see for example [KK]_.
 
     References
     ----------
-    For a review on Newton-Krylov methods, see for example [KK]_.
-
     .. [KK] D.A. Knoll and D.E. Keyes, J. Comp. Phys. 193, 357 (2003).
 
     """
 
     def __init__(self, x0, f0, func, rdiff=None,
                  method='gmres',
-                 inner_tol=1e-6, inner_maxiter=50, **kw):
+                 inner_tol=1e-6, inner_maxiter=50, inner_M=None, **kw):
         self.x0 = x0
         self.f0 = f0
         self.func = func
@@ -646,7 +656,8 @@ class KrylovJacobian(Jacobian):
             minres=scipy.sparse.linalg.minres,
             ).get(method, method)
         
-        self.method_kw = dict(tol=inner_tol, maxiter=inner_maxiter)
+        self.method_kw = dict(tol=inner_tol, maxiter=inner_maxiter,
+                              M=inner_M)
         for key, value in kw.items():
             if not key.startswith('inner_'):
                 raise ValueError("Unknown parameter %s" % key)
@@ -662,17 +673,88 @@ class KrylovJacobian(Jacobian):
         self.omega = self.rdiff * max(1, mx) / max(1, mf)
 
     def _mul(self, v):
-        sc = self.omega / norm(v)
-        return (self.func(self.x0 + sc*v) - self.f0) / sc
+        nv = norm(v)
+        if nv == 0:
+            return 0*v
+        sc = self.omega / nv
+        r = (self.func(self.x0 + sc*v) - self.f0) / sc
+        if not np.all(np.isfinite(r)) and np.all(np.isfinite(v)):
+            raise ValueError('Function returned non-finite results')
+        return r
 
     def solve(self, rhs):
-        sol, info = self.method(self.op, rhs)
+        sol, info = self.method(self.op, rhs, **self.method_kw)
         return sol
 
     def update(self, x, f):
         self.x0 = x
         self.f0 = f
         self._update_diff_step()
+
+class LGMRESJacobian(KrylovJacobian):
+    """
+    Find a root of a function, using LGMRES/Krylov approximation
+    for the inverse Jacobian.
+
+    This method is suitable for solving large-scale problems.
+
+    Parameters
+    ----------
+    %(params_basic)s
+    rdiff : float, optional
+        Relative step size to use in numerical differentiation.
+    inner_tol, inner_maxiter, inner_M : optional
+        Parameters to pass on to the \"inner\" Krylov solver.
+        See `scipy.sparse.linalg.lgmres` for details.
+    outer_k : int, optional
+        Size of the subspace kept across nonlinear iterations.
+    %(params_extra)s
+
+    See Also
+    --------
+    scipy.optimize.newton_krylov
+    scipy.sparse.linalg.lgmres
+
+    Notes
+    -----
+    This method is a Newton-Krylov method (see `newton_krylov` for details),
+    which uses the LGMRES [BJM] extension of the restarted GMRES algorithm
+    to invert the Jacobian matrix.
+
+    LGMRES is advantageous in nonlinear problems, since it can reuse some
+    of the information obtained in the previous Newton steps.
+
+    References
+    ----------
+    For a review on Newton-Krylov methods, see for example [KK]_,
+    and for the LGMRES sparse inverse method, see [BJM]_.
+
+    .. [KK] D.A. Knoll and D.E. Keyes, J. Comp. Phys. 193, 357 (2003).
+    .. [BJM] A.H. Baker and E.R. Jessup and T. Manteuffel,
+             SIAM J. Matrix Anal. Appl. 26, 962 (2005).
+
+    """
+
+    def __init__(self, x0, f0, func, rdiff=None,
+                 inner_tol=1e-6, inner_maxiter=50, inner_M=None,
+                 outer_k=6, **kw):
+
+        KrylovJacobian.__init__(self,
+                                x0, f0, func, rdiff=rdiff,
+                                method=scipy.sparse.linalg.lgmres,
+                                inner_tol=inner_tol,
+                                inner_maxiter=inner_maxiter,
+                                inner_inner_m=inner_maxiter, 
+                                inner_M=inner_M,
+                                inner_outer_k=outer_k,
+                                **kw)
+
+        # Replace the outer LGMRES loop by the nonlinear Newton iteration
+        self.method_kw['outer_maxiter'] = 1
+
+        # Carry LGMRES's `outer_v` vectors across nonlinear iterations
+        self.method_kw.setdefault('outer_v', [])
+
 
 #------------------------------------------------------------------------------
 # Wrapper functions
@@ -714,3 +796,4 @@ vackar = _broyden_wrapper('vackar', Vackar)
 excitingmixing = _broyden_wrapper('excitingmixing', ExcitingMixing)
 
 newton_krylov = _broyden_wrapper('newton_krylov', KrylovJacobian)
+newton_lgmres = _broyden_wrapper('newton_lgmres', LGMRESJacobian)
