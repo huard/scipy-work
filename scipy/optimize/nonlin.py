@@ -761,8 +761,8 @@ def _nonlin_wrapper(name, jac):
     wrapper = """
 def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
              f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
-             tol_norm=None, line_search=True):
-    jac = lambda x, f, func: %(jac)s(x, f, func %(kwkw)s)
+             tol_norm=None, line_search=True, **kw):
+    jac = lambda x, f, func: %(jac)s(x, f, func %(kwkw)s, **kw)
     return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
                         f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search)
 """
