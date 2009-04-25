@@ -52,14 +52,6 @@ Scalar function minimizers
    bracket
    brent
 
-Root finding
-============
-
-.. autosummary::
-   :toctree: generated/
-
-   fsolve
-
 Scalar function solvers
 -----------------------
 
@@ -79,18 +71,39 @@ Fixed point finding:
 
    fixed_point
 
-General-purpose nonlinear (multidimensional)
---------------------------------------------
+General-purpose nonlinear root finding (multidimensional)
+---------------------------------------------------------
+
+.. toctree::
+
+   optimize.nonlin
+
+General nonlinear solvers:
 
 .. autosummary::
    :toctree: generated/
 
+   fsolve
    broyden1
    broyden2
-   broyden3
-   broyden_generalized
+
+Large-scale nonlinear solvers:
+
+.. autosummary:
+   :toctree:
+
+   newton_krylov
    anderson
-   anderson2
+
+Simple iterations:
+
+.. autosummary::
+   :toctree:
+
+   excitingmixing
+   linearmixing
+   vackar
+
 
 Utility Functions
 =================
