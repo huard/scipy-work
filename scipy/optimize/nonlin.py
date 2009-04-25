@@ -58,7 +58,7 @@ import scipy.sparse.linalg
 import minpack2
 
 __all__ = ['broyden1', 'broyden2', 'anderson', 'linearmixing',
-           'vackar', 'excitingmixing', 'newton_krylov', 'newton_lgmres']
+           'vackar', 'excitingmixing', 'newton_krylov']
 
 #------------------------------------------------------------------------------
 # Utility functions
