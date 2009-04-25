@@ -1,32 +1,30 @@
-"""
+r"""
 Nonlinear solvers
 =================
 
-A collection of general-purpose nonlinear multidimensional solvers.
-These solvers find x for which F(x)=0. Both x and F can be multidimensional.
+.. currentmodule:: scipy.optimize
 
-They accept the user defined function F, which accepts an ndarray x and it
-should return F(x), which should be array-like.
+This is a collection of general-purpose nonlinear multidimensional
+solvers.  These solvers find *x* for which :math:`F(x)=0`. Both *x*
+and *F* can be multidimensional.
 
 Example:
 
 >>> def F(x):
-...    \"\"\"Should converge to x=[0,0,0,0,0]\"\"\"
+...    '''Should converge to x=[0,0,0,0,0]'''
 ...    d = [3,2,1.5,1,0.5]
 ...    c = 0.01
 ...    return -d * x - c*x**3
-
 >>> import scipy.optimize
 >>> x = scipy.optimize.broyden2(F, [1,1,1,1,1])
 
 
-Methods
--------
+Routines
+--------
 
 Large-scale nonlinear solvers:
 
-.. autosummary:
-   :toctree:
+.. autosummary::
 
    newton_krylov
    anderson
@@ -34,7 +32,6 @@ Large-scale nonlinear solvers:
 General nonlinear solvers:
 
 .. autosummary::
-   :toctree:
 
    broyden1
    broyden2
@@ -42,11 +39,65 @@ General nonlinear solvers:
 Simple iterations:
 
 .. autosummary::
-   :toctree:
 
    excitingmixing
    linearmixing
    vackar
+
+
+Example: large problem
+----------------------
+
+Suppose that we needed to solve the following integrodifferential
+equation on the square :math:`[0,1]\times[0,1]`:
+
+.. math::
+
+   \nabla^2 P = 10 \left(\int_0^1\int_0^1\cosh(P)\,dx\,dy\right)^2
+
+with :math:`P(x,1) = 1` and :math:`P=0` elsewhere on the boundary of
+the square.
+
+The solution can be found using the `newton_krylov` solver:
+
+.. plot::
+
+   import numpy as np
+   from scipy.optimize import newton_krylov
+   from numpy import cosh, zeros_like, mgrid, zeros
+
+   # parameters
+   nx, ny = 75, 75
+   hx, hy = 1./(nx-1), 1./(ny-1)
+
+   P_left, P_right = 0, 0
+   P_top, P_bottom = 1, 0
+
+   def residual(P):
+       d2x = zeros_like(P)
+       d2y = zeros_like(P)
+
+       d2x[1:-1] = (P[2:]   - 2*P[1:-1] + P[:-2]) / hx/hx
+       d2x[0]    = (P[1]    - 2*P[0]    + P_left)/hx/hx
+       d2x[-1]   = (P_right - 2*P[-1]   + P[-2])/hx/hx
+
+       d2y[:,1:-1] = (P[:,2:] - 2*P[:,1:-1] + P[:,:-2])/hy/hy
+       d2y[:,0]    = (P[:,1]  - 2*P[:,0]    + P_bottom)/hy/hy
+       d2y[:,-1]   = (P_top   - 2*P[:,-1]   + P[:,-2])/hy/hy
+
+       return d2x + d2y - 10*cosh(P).mean()**2
+
+   # solve
+   guess = zeros((nx, ny), float)
+   sol = newton_krylov(residual, guess, method='lgmres', verbose=1)
+   print 'Residual', abs(residual(sol)).max()
+
+   # visualize
+   import matplotlib.pyplot as plt
+   x, y = mgrid[0:1:(nx*1j), 0:1:(ny*1j)]
+   plt.pcolor(x, y, sol)
+   plt.colorbar()
+   plt.show()
 
 """
 # Copyright (C) 2009, Pauli Virtanen <pav@iki.fi>
@@ -605,7 +656,7 @@ class ExcitingMixing(GenericBroyden):
 #------------------------------------------------------------------------------
 
 class KrylovJacobian(Jacobian):
-    """
+    r"""
     Find a root of a function, using Krylov approximation for inverse Jacobian.
 
     This method is suitable for solving large-scale problems.

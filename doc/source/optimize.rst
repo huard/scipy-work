@@ -52,8 +52,11 @@ Scalar function minimizers
    bracket
    brent
 
-Scalar function solvers
------------------------
+Root finding
+============
+
+Scalar functions
+----------------
 
 .. autosummary::
    :toctree: generated/
@@ -71,10 +74,11 @@ Fixed point finding:
 
    fixed_point
 
-General-purpose nonlinear root finding (multidimensional)
----------------------------------------------------------
+Multidimensional
+----------------
 
 .. toctree::
+   :maxdepth: 1
 
    optimize.nonlin
 
@@ -89,8 +93,8 @@ General nonlinear solvers:
 
 Large-scale nonlinear solvers:
 
-.. autosummary:
-   :toctree:
+.. autosummary::
+   :toctree: generated/
 
    newton_krylov
    anderson
@@ -98,7 +102,7 @@ Large-scale nonlinear solvers:
 Simple iterations:
 
 .. autosummary::
-   :toctree:
+   :toctree: generated/
 
    excitingmixing
    linearmixing
