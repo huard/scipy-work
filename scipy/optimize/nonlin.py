@@ -240,6 +240,7 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     """
     
     dx_norm = norm(dx)
+    x_norm = norm(x)
     dx = dx / dx_norm
     if dx_norm == 0:
         raise ValueError('Invalid search direction')
@@ -248,7 +249,7 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
         return norm(F(x + s*dx))
 
     def grad(s, f0):
-        ds = (abs(s) + norm(x)) * eps
+        ds = (abs(s) + x_norm) * eps
         return (func(s + ds) - f0) / ds
 
     xtol = 1e-2
