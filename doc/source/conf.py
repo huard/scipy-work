@@ -34,15 +34,15 @@ master_doc = 'index'
 
 # General substitutions.
 project = 'SciPy'
-copyright = '2008, The Scipy community'
+copyright = '2008-2009, The Scipy community'
 
 # The default replacements for |version| and |release|, also used in various
 # other places throughout the built documents.
 #
 # The short X.Y version.
-version = '0.7'
+version = '0.8.dev'
 # The full version, including alpha/beta/rc tags.
-release = '0.7.dev'
+release = '0.8.dev'
 
 # There are two options for replacing |today|: either, you set today to some
 # non-false value, then it is used:
@@ -168,6 +168,7 @@ latex_documents = [
 # Additional stuff for the LaTeX preamble.
 latex_preamble = r'''
 \usepackage{amsmath}
+\DeclareUnicodeCharacter{00A0}{\nobreakspace}
 
 % In the parameters section, place a newline after the Parameters
 % header
@@ -239,3 +240,5 @@ numpy.random.seed(123)
 """
 plot_output_dir = '_static/plot_directive'
 plot_include_source = True
+plot_formats = ['png', 'pdf']
+

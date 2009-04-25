@@ -367,7 +367,7 @@ class TestCephes(TestCase):
         cephes.obl_rad2_cv(1,1,1,1,0)
 
     def test_pbdv(self):
-        assert_equal(cephes.pbdv(1,0),(0.0,0.0))
+        assert_equal(cephes.pbdv(1,0),(0.0,1.0))
     def test_pbvv(self):
         cephes.pbvv(1,0)
     def test_pbwa(self):
@@ -868,6 +868,10 @@ class TestTandg(TestCase):
         assert_almost_equal(tandg(-315), 1.0, 14)
 
 class TestEllip(TestCase):
+    def test_ellipj_nan(self):
+        """Regression test for #885."""
+        ellipj(0.5, np.nan)
+
     def test_ellipj(self):
         el = ellipj(0.2,0)
         rel = [sin(0.2),cos(0.2),1.0,0.20]
@@ -1629,19 +1633,33 @@ class TestBessel(TestCase):
         yvp1 = yvp(2,.2)
         assert_array_almost_equal(yvp1,yvpr,10)
 
+
+    def _cephes_vs_amos_points(self):
+        """Yield points at which to compare Cephes implementation to AMOS"""
+        # check several points, including large-amplitude ones
+        for v in [-120, -100.3, -20., -10., -1., -.5,
+                  0., 1., 12.49, 120., 301]:
+            for z in [-1300, -11, -10, -1, 1., 10., 200.5, 401., 600.5,
+                      700.6, 1300, 10003]:
+                yield v, z
+                
+        # check half-integers; these are problematic points at least
+        # for cephes/iv
+        for v in 0.5 + arange(-60, 60):
+            yield v, 3.5
+
     def check_cephes_vs_amos(self, f1, f2, rtol=1e-11, atol=0):
-        for v in [-120, -100.3, -20., -10., -1., 0., 1., 12.49, 120., 301]:
-            for z in [-1300, -11, -10, -1, 1., 10., 200.5, 401., 600.5, 700.6,
-                      1300, 10003]:
-                c1, c2, c3 = f1(v, z), f1(v,z+0j), f2(int(v), z)
-                if np.isinf(c1):
-                    assert np.abs(c2) >= 1e150, (v, z)
-                elif np.isnan(c1):
-                    assert c2.imag != 0, (v, z)
-                else:
-                    assert_tol_equal(c1, c2, err_msg=(v, z), rtol=rtol, atol=atol)
-                    if v == int(v):
-                        assert_tol_equal(c3, c2, err_msg=(v, z), rtol=rtol, atol=atol)
+        for v, z in self._cephes_vs_amos_points():
+            c1, c2, c3 = f1(v, z), f1(v,z+0j), f2(int(v), z)
+            if np.isinf(c1):
+                assert np.abs(c2) >= 1e300, (v, z)
+            elif np.isnan(c1):
+                assert c2.imag != 0, (v, z)
+            else:
+                assert_tol_equal(c1, c2, err_msg=(v, z), rtol=rtol, atol=atol)
+                if v == int(v):
+                    assert_tol_equal(c3, c2, err_msg=(v, z),
+                                     rtol=rtol, atol=atol)
 
     def test_jv_cephes_vs_amos(self):
         self.check_cephes_vs_amos(jv, jn, rtol=1e-10, atol=1e-305)
@@ -1650,7 +1668,29 @@ class TestBessel(TestCase):
         self.check_cephes_vs_amos(yv, yn, rtol=1e-11, atol=1e-305)
 
     def test_iv_cephes_vs_amos(self):
-        self.check_cephes_vs_amos(iv, iv, rtol=1e-8, atol=1e-305)
+        self.check_cephes_vs_amos(iv, iv, rtol=1e-12, atol=1e-305)
+
+    @dec.slow
+    def test_iv_cephes_vs_amos_mass_test(self):
+        N = 1000000
+        np.random.seed(1)
+        v = np.random.pareto(0.5, N) * (-1)**np.random.randint(2, size=N)
+        x = np.random.pareto(0.2, N) * (-1)**np.random.randint(2, size=N)
+
+        imsk = (np.random.randint(8, size=N) == 0)
+        v[imsk] = v.astype(int)
+
+        c1 = iv(v, x)
+        c2 = iv(v, x+0j)
+
+        dc = abs(c1/c2 - 1)
+        dc[np.isnan(dc)] = 0
+
+        k = np.argmax(dc)
+
+        # Most error apparently comes from AMOS and not our implementation;
+        # there are some problems near integer orders there
+        assert dc[k] < 1e-9, (iv(v[k], x[k]), iv(v[k], x[k]+0j))
 
     def test_kv_cephes_vs_amos(self):
         #self.check_cephes_vs_amos(kv, kn, rtol=1e-9, atol=1e-305)
@@ -1674,7 +1714,7 @@ class TestBessel(TestCase):
         assert_tol_equal(kv(-2,   1   ), 1.624838898635178)
         assert_tol_equal(jv(-0.5, 1   ), 0.43109886801837607952)
         assert_tol_equal(yv(-0.5, 1   ), 0.6713967071418031)
-        #assert_tol_equal(iv(-0.5, 1   ), 1.231200214592967)
+        assert_tol_equal(iv(-0.5, 1   ), 1.231200214592967)
         assert_tol_equal(kv(-0.5, 1   ), 0.4610685044478945)
         # amos
         assert_tol_equal(jv(-1,   1+0j), -0.4400505857449335)
@@ -1721,6 +1761,14 @@ class TestBessel(TestCase):
         assert isnan(kve(1, -1))
         assert isnan(airye(-1)[0:2]).all(), airye(-1)
         assert not isnan(airye(-1)[2:4]).any(), airye(-1)
+
+    def test_ticket_503(self):
+        """Real-valued Bessel I overflow"""
+        assert_tol_equal(iv(1, 700), 1.528500390233901e302)
+        assert_tol_equal(iv(1000, 1120), 1.301564549405821e301)
+
+    def test_iv_hyperg_poles(self):
+        assert_tol_equal(iv(-0.5, 1), 1.231200214592967)
 
     def iv_series(self, v, z, n=200):
         k = arange(0, n).astype(float_)
@@ -1963,6 +2011,35 @@ class TestParabolicCylinder(TestCase):
         pbn = pbdn_seq(1,.1)
         pbv = pbdv_seq(1,.1)
         assert_array_almost_equal(pbv,(real(pbn[0]),real(pbn[1])),4)
+
+    def test_pbdv_points(self):
+        # simple case
+        eta = np.linspace(-10, 10, 5)
+        z = 2**(eta/2)*np.sqrt(np.pi)/gamma(.5-.5*eta)
+        assert_tol_equal(pbdv(eta, 0.)[0], z, rtol=1e-14, atol=1e-14)
+
+        # some points
+        assert_tol_equal(pbdv(10.34, 20.44)[0], 1.3731383034455e-32, rtol=1e-12)
+        assert_tol_equal(pbdv(-9.53, 3.44)[0], 3.166735001119246e-8, rtol=1e-12)
+
+    def test_pbdv_gradient(self):
+        x = np.linspace(-4, 4, 8)[:,None]
+        eta = np.linspace(-10, 10, 5)[None,:]
+
+        p = pbdv(eta, x)
+        eps = 1e-7 + 1e-7*abs(x)
+        dp = (pbdv(eta, x + eps)[0] - pbdv(eta, x - eps)[0]) / eps / 2.
+        assert_tol_equal(p[1], dp, rtol=1e-6, atol=1e-6)
+        
+    def test_pbvv_gradient(self):
+        x = np.linspace(-4, 4, 8)[:,None]
+        eta = np.linspace(-10, 10, 5)[None,:]
+
+        p = pbvv(eta, x)
+        eps = 1e-7 + 1e-7*abs(x)
+        dp = (pbvv(eta, x + eps)[0] - pbvv(eta, x - eps)[0]) / eps / 2.
+        assert_tol_equal(p[1], dp, rtol=1e-6, atol=1e-6)
+        
 
 class TestPolygamma(TestCase):
     # from Table 6.2 (pg. 271) of A&S

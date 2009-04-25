@@ -39,7 +39,8 @@ def process_html(fn, lines):
 
 def process_tex(lines):
     """
-    Remove unnecessary section titles from the LaTeX file.
+    Remove unnecessary section titles from the LaTeX file,
+    and convert UTF-8 non-breaking spaces to Latex nbsps.
 
     """
     new_lines = []

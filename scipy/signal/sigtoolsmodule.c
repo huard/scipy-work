@@ -126,7 +126,8 @@ static int increment(intp *ret_ind, int nd, intp *max_ind) {
  */
 
 #define MAKE_MultAdd(NTYPE, ctype) \
-static void NTYPE ## _MultAdd(char *ip1, intp is1, char *ip2, intp is2, char *op, \
+static void NTYPE ## _MultAdd(char *ip1, intp NPY_UNUSED(is1), \
+                          char *ip2, intp NPY_UNUSED(is2), char *op, \
 			  intp *dims1, intp *dims2, int ndims, intp nels2, int check, \
 			  intp *loop_ind, intp *temp_ind, uintp *offset) \
 {									\
@@ -172,7 +173,8 @@ MAKE_MultAdd(DOUBLE, double)
 MAKE_MultAdd(LONGDOUBLE, longdouble)
 
 #define MAKE_CMultAdd(NTYPE, ctype) \
-static void NTYPE ## _MultAdd(char *ip1, intp is1, char *ip2, intp is2, char *op, \
+static void NTYPE ## _MultAdd(char *ip1, intp NPY_UNUSED(is1), char *ip2, \
+                              intp NPY_UNUSED(is2), char *op, \
 			      intp *dims1, intp *dims2, int ndims, intp nels2, int check, \
 			      intp *loop_ind, intp *temp_ind, uintp *offset) \
 { \
@@ -296,342 +298,6 @@ static void correlateND(Generic_Array *ap1, Generic_Array *ap2, Generic_Array *r
   free(offsets); free(offsets2); free(temp_ind);
   free(check_ind); free(mode_dep);
 }
-
-/*****************************************************************
- *   This is code for a 1-D linear-filter along an arbitrary     *
- *   dimension of an N-D array.                                  *
- *****************************************************************/
-
-static void FLOAT_filt(char *b, char *a, char *x, char *y, char *Z, intp len_b, uintp len_x, intp stride_X, intp stride_Y ) {
-  char *ptr_x = x, *ptr_y = y;
-  float *ptr_Z, *ptr_b;
-  float *ptr_a;
-  float *xn, *yn;
-  const float a0 = *((float *)a);
-  int k, n;
-
-  for (k = 0; k < len_x; k++) {
-    ptr_b = (float *)b;          /* Reset a and b pointers */
-    ptr_a = (float *)a;
-    xn = (float *)ptr_x;
-    yn = (float *)ptr_y;
-    if (len_b > 1) {
-      ptr_Z = ((float *)Z);
-      *yn = *ptr_Z + *ptr_b / a0 * *xn;    /* Calculate first delay (output) */
-      ptr_b++; ptr_a++;
-    /* Fill in middle delays */
-      for (n = 0; n < len_b - 2; n++) {
-	*ptr_Z = ptr_Z[1] + *xn * (*ptr_b / a0) - *yn * (*ptr_a / a0);
-	ptr_b++; ptr_a++; ptr_Z++;
-      }
-    /* Calculate last delay */
-      *ptr_Z = *xn * (*ptr_b / a0) - *yn * (*ptr_a / a0);
-    }
-    else {
-      *yn = *xn * (*ptr_b / a0);
-    }
-
-    ptr_y += stride_Y;             /* Move to next input/output point */
-    ptr_x += stride_X;     
-  }
-}
-
-
-static void DOUBLE_filt(char *b, char *a, char *x, char *y, char *Z, intp len_b, uintp len_x, intp stride_X, intp stride_Y ) {
-  char *ptr_x = x, *ptr_y = y;
-  double *ptr_Z, *ptr_b;
-  double *ptr_a;
-  double *xn, *yn;
-  double a0;
-  int k, n;
-
-  a0 = *((double *)a);
-  for (k = 0; k < len_x; k++) {
-    ptr_b = (double *)b;          /* Reset a and b pointers */
-    ptr_a = (double *)a;
-    xn = (double *)ptr_x;
-    yn = (double *)ptr_y;
-    if (len_b > 1) {
-      ptr_Z = ((double *)Z);
-      *yn = *ptr_Z + *ptr_b / a0 * *xn;    /* Calculate first delay (output) */
-      ptr_b++; ptr_a++;
-      /* Fill in middle delays */
-      for (n = 0; n < len_b - 2; n++) {
-	*ptr_Z = ptr_Z[1] + *xn * (*ptr_b / a0) - *yn * (*ptr_a / a0);
-	ptr_b++; ptr_a++; ptr_Z++;
-      }
-    /* Calculate last delay */
-      *ptr_Z = *xn * (*ptr_b / a0) - *yn * (*ptr_a / a0);
-    }
-    else {
-      *yn = *xn * (*ptr_b / a0);
-    }
-
-    ptr_y += stride_Y;             /* Move to next input/output point */
-    ptr_x += stride_X;     
-  }
-}
-
- 
-static void CFLOAT_filt(char *b, char *a, char *x, char *y, char *Z, intp len_b, uintp len_x, intp stride_X, intp stride_Y ) {
-  char *ptr_x = x, *ptr_y = y;
-  float *ptr_Z, *ptr_b;
-  float *ptr_a;
-  float *xn, *yn;
-  float a0r = ((float *)a)[0];
-  float a0i = ((float *)a)[1];
-  float a0_mag, tmpr, tmpi;
-  int k, n;
-
-  a0_mag = a0r*a0r + a0i*a0i;
-  for (k = 0; k < len_x; k++) {
-    ptr_b = (float *)b;          /* Reset a and b pointers */
-    ptr_a = (float *)a;
-    xn = (float *)ptr_x;
-    yn = (float *)ptr_y;
-    if (len_b > 1) {
-      ptr_Z = ((float *)Z);
-      tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-      tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-      /* Calculate first delay (output) */
-      yn[0] = ptr_Z[0] + (tmpr * xn[0] - tmpi * xn[1])/a0_mag;    
-      yn[1] = ptr_Z[1] + (tmpi * xn[0] + tmpr * xn[1])/a0_mag;
-      ptr_b += 2; ptr_a += 2;
-      /* Fill in middle delays */
-      for (n = 0; n < len_b - 2; n++) {
-	tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-	tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-	ptr_Z[0] = ptr_Z[2] + (tmpr * xn[0] - tmpi * xn[1])/a0_mag;
-	ptr_Z[1] = ptr_Z[3] + (tmpi * xn[0] + tmpr * xn[1])/a0_mag;
-	tmpr = ptr_a[0]*a0r + ptr_a[1]*a0i;
-	tmpi = ptr_a[1]*a0r - ptr_a[0]*a0i;
-	ptr_Z[0] -= (tmpr * yn[0] - tmpi * yn[1])/a0_mag;
-	ptr_Z[1] -= (tmpi * yn[0] + tmpr * yn[1])/a0_mag;
-	ptr_b += 2; ptr_a += 2; ptr_Z += 2;
-      }
-      /* Calculate last delay */
-
-      tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-      tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-      ptr_Z[0] = (tmpr * xn[0] - tmpi * xn[1])/a0_mag;
-      ptr_Z[1] = (tmpi * xn[0] + tmpr * xn[1])/a0_mag;
-      tmpr = ptr_a[0]*a0r + ptr_a[1]*a0i;
-      tmpi = ptr_a[1]*a0r - ptr_a[0]*a0i;
-      ptr_Z[0] -= (tmpr * yn[0] - tmpi * yn[1])/a0_mag;
-      ptr_Z[1] -= (tmpi * yn[0] + tmpr * yn[1])/a0_mag;
-    }
-    else {
-      tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-      tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-      yn[0] = (tmpr * xn[0] - tmpi * xn[1])/a0_mag;
-      yn[1] = (tmpi * xn[0] + tmpr * xn[1])/a0_mag;      
-    }
-
-    ptr_y += stride_Y;             /* Move to next input/output point */
-    ptr_x += stride_X;     
-
-  }
-}
-
-
-static void CDOUBLE_filt(char *b, char *a, char *x, char *y, char *Z, intp len_b, uintp len_x, intp stride_X, intp stride_Y ) {
-  char *ptr_x = x, *ptr_y = y;
-  double *ptr_Z, *ptr_b;
-  double *ptr_a;
-  double *xn, *yn;
-  double a0r = ((double *)a)[0];
-  double a0i = ((double *)a)[1];
-  double a0_mag, tmpr, tmpi;
-  int k, n;
-
-  a0_mag = a0r*a0r + a0i*a0i;
-  for (k = 0; k < len_x; k++) {
-    ptr_b = (double *)b;          /* Reset a and b pointers */
-    ptr_a = (double *)a;
-    xn = (double *)ptr_x;
-    yn = (double *)ptr_y;
-    if (len_b > 1) {
-      ptr_Z = ((double *)Z);
-      tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-      tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-      /* Calculate first delay (output) */
-      yn[0] = ptr_Z[0] + (tmpr * xn[0] - tmpi * xn[1])/a0_mag;    
-      yn[1] = ptr_Z[1] + (tmpi * xn[0] + tmpr * xn[1])/a0_mag;
-      ptr_b += 2; ptr_a += 2;
-      /* Fill in middle delays */
-      for (n = 0; n < len_b - 2; n++) {
-	tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-	tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-	ptr_Z[0] = ptr_Z[2] + (tmpr * xn[0] - tmpi * xn[1])/a0_mag;
-	ptr_Z[1] = ptr_Z[3] + (tmpi * xn[0] + tmpr * xn[1])/a0_mag;
-	tmpr = ptr_a[0]*a0r + ptr_a[1]*a0i;
-	tmpi = ptr_a[1]*a0r - ptr_a[0]*a0i;
-	ptr_Z[0] -= (tmpr * yn[0] - tmpi * yn[1])/a0_mag;
-	ptr_Z[1] -= (tmpi * yn[0] + tmpr * yn[1])/a0_mag;
-	ptr_b += 2; ptr_a += 2; ptr_Z += 2;
-      }
-      /* Calculate last delay */
-      tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-      tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-      ptr_Z[0] = (tmpr * xn[0] - tmpi * xn[1])/a0_mag;
-      ptr_Z[1] = (tmpi * xn[0] + tmpr * xn[1])/a0_mag;
-      tmpr = ptr_a[0]*a0r + ptr_a[1]*a0i;
-      tmpi = ptr_a[1]*a0r - ptr_a[0]*a0i;
-      ptr_Z[0] -= (tmpr * yn[0] - tmpi * yn[1])/a0_mag;
-      ptr_Z[1] -= (tmpi * yn[0] + tmpr * yn[1])/a0_mag;
-    }
-    else {
-      tmpr = ptr_b[0]*a0r + ptr_b[1]*a0i;
-      tmpi = ptr_b[1]*a0r - ptr_b[0]*a0i;
-      yn[0] = (tmpr * xn[0] - tmpi * xn[1])/a0_mag;
-      yn[1] = (tmpi * xn[0] + tmpr * xn[1])/a0_mag;      
-    } 
-    ptr_y += stride_Y;             /* Move to next input/output point */
-    ptr_x += stride_X;     
-  }
-}
-
-
-
-
-/* This routine expects the vector to a to begin with a non-zero value */
-
-static void RawFilter(Generic_Vector Vb, Generic_Vector Va, Generic_Array X, Generic_Array Y, Generic_Array *Vi, Generic_Array *Vf, BasicFilterFunction *filt, int along_dimen) {
-
-  int k, n, byte_len;
-  int ndims, num_loops, count, stride_X, stride_Y, incr = 1, filt_size;
-  unsigned int len;
-  intp *loop_index, *loop_strides_X, *loop_strides_Y, *loop_strides_Vi;
-  intp *loop_strides_Vf, *max_index;
-  char *ptrX, *ptrY, *ptrVi=NULL, *ptrVf, *ptra, *ptrb;
-  char *pa1, *pa2, *pb1, *pb2;
-
-  /* Make dimension array for the looping index that has 
-   * along_dimen removed.  Also remove along_dimension from strides
-   * vectors.
-   */
-  ndims = X.nd - 1; 
-  if (ndims < 1)
-    ndims = 1;                 /* make sure at least 1 for allocation */
-  byte_len = ndims*sizeof(intp);
-  max_index = (intp *)malloc(byte_len);
-  loop_index = (intp *)malloc(byte_len);
-  memset(loop_index, 0, byte_len);
-  loop_strides_X = (intp *)malloc(byte_len);
-  loop_strides_Y = (intp *)malloc(byte_len);
-  loop_strides_Vi = (intp *)malloc(byte_len);
-  loop_strides_Vf = (intp *)malloc(byte_len);
-  num_loops = 1;
-  count = 0;
-  for (k=0; k < X.nd; k++) {
-    if (k != along_dimen) {
-      loop_strides_X[count] = X.strides[k];
-      loop_strides_Y[count] = Y.strides[k];
-      max_index[count++] = X.dimensions[k];
-      num_loops *= X.dimensions[k];
-      if (Vi != NULL) {
-	loop_strides_Vi[k] = Vi->strides[k];
-	loop_strides_Vf[k] = Vf->strides[k];
-      }
-    }
-  }
-
-  /* Make same length buffers for the a and b filter coefficients.
-     and fill with received values and zero for others.
-   */
-#define max(x,y) ((x) > (y) ? (x) : (y))
-  filt_size = max(Vb.numels, Va.numels);
-#undef max
-
-  ptra = (char *)malloc(filt_size*Va.elsize);
-  ptrb = (char *)malloc(filt_size*Vb.elsize);
-  pa1 = ptra; pa2 = Va.data;
-  pb1 = ptrb; pb2 = Vb.data;
-  for (k = 0; k < filt_size; k++) {
-    if (k < Va.numels)
-      memcpy(pa1, pa2, Va.elsize);
-    else
-      memcpy(pa1, Va.zero, Va.elsize);
-    if (k < Vb.numels)
-      memcpy(pb1, pb2, Vb.elsize);
-    else
-      memcpy(pb1, Vb.zero, Vb.elsize);
-    pa1 += Va.elsize; 
-    pa2 += Va.elsize;
-    pb1 += Vb.elsize;
-    pb2 += Vb.elsize;
-  }    
-    
-  len = X.dimensions[along_dimen];
-  stride_X = X.strides[along_dimen]; 
-  stride_Y = Y.strides[along_dimen];
-
-  if (Vi != NULL) {          /* Copy initial data to final data space */
-    ptrVi = Vi->data;         /*  Where it will be used in calcluations */
-    ptrVf = Vf->data;
-    pa1 = ptrVi; pa2 = ptrVf;
-    for (k=0; k < filt_size - 1; k++) {
-      memcpy(pa2, pa1, Vi->elsize);
-      pa2 += Vf->elsize;              /* Contiguous */
-      pa1 += Vi->strides[along_dimen]; /* Possibly non-contiguous */
-    }
-  }
-  else { /* Initial conditions are zero, and final conditions will be ignored 
-	    Create some area to use for the filter delays and fill with zeros.
-          */
-    ptrVf = (char *)malloc((filt_size-1)*X.elsize);
-    pa2 = ptrVf;
-    for (k = 0; k < filt_size - 1; k++) {
-      memcpy(pa2, X.zero, X.elsize);
-      pa2 += X.elsize;
-    }
-  }
-
-  ptrX = X.data;
-  ptrY = Y.data;
-
-  while (num_loops--) { 
-    filt(ptrb, ptra, ptrX, ptrY, ptrVf, filt_size, len, stride_X, stride_Y);
-    incr = increment(loop_index, ndims, max_index);  /* Returns number of N-D indices incremented. */
-    k = ndims - incr;
-
-    if (num_loops > 0) {
-    /* Adjust index array and move pointers to right place for next iteration */
-
-      ptrX += loop_strides_X[k];         /* Stride information */
-      ptrY += loop_strides_Y[k];
-
-      if (Vi != NULL) {
-	ptrVi += loop_strides_Vi[k];
-	ptrVf += loop_strides_Vf[k];            /* Move to new storage area */
-	pa1 = ptrVi; pa2 = ptrVf;
-	for (n=0; n < filt_size - 1; n++) {   /* Copy new initial conditions */
-	  memcpy(pa2, pa1, Vi->elsize);
-	  pa2 += Vf->elsize;               /* Contiguous */
-	  pa1 += Vi->strides[along_dimen]; /* Possibly non-contiguous */
-	}
-      }
-      else {             /* Re-initialize delays to zero */
-	pa2 = ptrVf;
-	for (n = 0; n < filt_size - 1; n++) {
-	  memcpy(pa2, X.zero, X.elsize);
-	  pa2 += X.elsize;
-	  
-	}
-      }    
-    }
-  }
-  if (Vi == NULL) {
-     free(ptrVf);
-  }
-
-  free(ptra); free(ptrb);
-  free(loop_index); free(max_index);
-  free(loop_strides_X); free(loop_strides_Y); 
-  free(loop_strides_Vi); free(loop_strides_Vf);
-}
-
-
 
 /********************************************************
  *
@@ -1321,64 +987,6 @@ static MultAddFunction *MultiplyAddFunctions[] =
    CFLOAT_MultAdd, CDOUBLE_MultAdd, CLONGDOUBLE_MultAdd,
    OBJECT_MultAdd, NULL, NULL, NULL};
 
-static void OBJECT_filt(char *b, char *a, char *x, char *y, char *Z, intp len_b, uintp len_x, intp stride_X, intp stride_Y ) {
-  char *ptr_x = x, *ptr_y = y;
-  PyObject  **ptr_Z, **ptr_b;
-  PyObject  **ptr_a;
-  PyObject  **xn, **yn;
-  PyObject  **a0 = (PyObject  **)a;
-  PyObject  *tmp1, *tmp2, *tmp3;
-  int k, n;
-
-  /* My reference counting might not be right */
-  for (k = 0; k < len_x; k++) {
-    ptr_b = (PyObject  **)b;          /* Reset a and b pointers */
-    ptr_a = (PyObject  **)a;
-    xn = (PyObject  **)ptr_x;
-    yn = (PyObject  **)ptr_y;
-    if (len_b > 1) {
-      ptr_Z = ((PyObject  **)Z);
-      /* Calculate first delay (output) */
-      tmp1 = PyNumber_Multiply(*ptr_b,*xn);
-      tmp2 = PyNumber_Divide(tmp1,*a0);
-      tmp3 = PyNumber_Add(tmp2,*ptr_Z);
-      Py_XDECREF(*yn);
-      *yn = tmp3; Py_DECREF(tmp1); Py_DECREF(tmp2);
-      ptr_b++; ptr_a++;
-
-      /* Fill in middle delays */
-      for (n = 0; n < len_b - 2; n++) {
-	tmp1 = PyNumber_Multiply(*xn, *ptr_b);
-	tmp2 = PyNumber_Divide(tmp1,*a0);
-	tmp3 = PyNumber_Add(tmp2,ptr_Z[1]);
-	Py_DECREF(tmp1); Py_DECREF(tmp2);
-	tmp1 = PyNumber_Multiply(*yn, *ptr_a);
-	tmp2 = PyNumber_Divide(tmp1, *a0); Py_DECREF(tmp1);
-	Py_XDECREF(*ptr_Z);
-	*ptr_Z = PyNumber_Subtract(tmp3, tmp2); Py_DECREF(tmp2);
-	Py_DECREF(tmp3);
-	ptr_b++; ptr_a++; ptr_Z++;
-      }
-    /* Calculate last delay */
-      tmp1 = PyNumber_Multiply(*xn,*ptr_b);
-      tmp3 = PyNumber_Divide(tmp1,*a0); Py_DECREF(tmp1);
-      tmp1 = PyNumber_Multiply(*yn, *ptr_a);
-      tmp2 = PyNumber_Divide(tmp1, *a0); Py_DECREF(tmp1);
-      Py_XDECREF(*ptr_Z);
-      *ptr_Z = PyNumber_Subtract(tmp3,tmp2); Py_DECREF(tmp2);
-      Py_DECREF(tmp3);
-    }
-    else {
-      tmp1 = PyNumber_Multiply(*xn,*ptr_b);
-      Py_XDECREF(*yn);
-      *yn = PyNumber_Divide(tmp1,*a0); Py_DECREF(tmp1);
-    }
-
-    ptr_y += stride_Y;             /* Move to next input/output point */
-    ptr_x += stride_X;     
-  }
-}
-
 /************************/
 /* N-D Order Filtering. */
 
@@ -1608,14 +1216,6 @@ fail:
 }
 
 
-static BasicFilterFunction *BasicFilterFunctions[] = \
-	{NULL, NULL,NULL,NULL,NULL,NULL,NULL, NULL, NULL, NULL, NULL, \
-	 FLOAT_filt, DOUBLE_filt, NULL,				      \
-	 CFLOAT_filt, CDOUBLE_filt, NULL, \
-	 OBJECT_filt, NULL, NULL, NULL}; 
-/* There is the start of an OBJECT_filt, but it may need work */
-
-
 /* Copy data from PyArray to Generic header for use in C routines */
 static void Py_copy_info(Generic_Array *gen, PyArrayObject *py_arr) {
         gen->data = py_arr->data;
@@ -1627,19 +1227,11 @@ static void Py_copy_info(Generic_Array *gen, PyArrayObject *py_arr) {
 	return;
 }
 
-static void Py_copy_info_vec(Generic_Vector *gen, PyArrayObject *py_arr) {
-        gen->data = py_arr->data;
-	gen->elsize = py_arr->descr->elsize;
-	gen->numels = PyArray_Size((PyObject *)py_arr);
-	gen->zero = PyArray_Zero(py_arr);
-	return;
-}
-
 /******************************************/
 
 static char doc_correlateND[] = "out = _correlateND(a,kernel,mode) \n\n   mode = 0 - 'valid', 1 - 'same', \n  2 - 'full' (default)";
 
-static PyObject *sigtools_correlateND(PyObject *dummy, PyObject *args) {
+static PyObject *sigtools_correlateND(PyObject *NPY_UNUSED(dummy), PyObject *args) {
 	PyObject *kernel, *a0;
 	PyArrayObject *ap1, *ap2, *ret;
 	Generic_Array in1, in2, out;
@@ -1736,7 +1328,7 @@ static char doc_convolve2d[] = "out = _convolve2d(in1, in2, flip, mode, boundary
 
 extern int pylab_convolve_2d(char*,intp*,char*,intp*,char*,intp*,intp*,intp*,int,char*);
 
-static PyObject *sigtools_convolve2d(PyObject *dummy, PyObject *args) {
+static PyObject *sigtools_convolve2d(PyObject *NPY_UNUSED(dummy), PyObject *args) {
 
     PyObject *in1=NULL, *in2=NULL, *fill_value=NULL;
     int mode=2, boundary=0, typenum, flag, flip=1, ret;
@@ -1861,7 +1453,7 @@ fail:
 
 static char doc_order_filterND[] = "out = _order_filterND(a,domain,order)";
 
-static PyObject *sigtools_order_filterND(PyObject *dummy, PyObject *args) {
+static PyObject *sigtools_order_filterND(PyObject *NPY_UNUSED(dummy), PyObject *args) {
 	PyObject *domain, *a0;
 	int order=0;
 	
@@ -1872,146 +1464,9 @@ static PyObject *sigtools_order_filterND(PyObject *dummy, PyObject *args) {
 
 
 
-static char doc_linear_filter[] = "(y,Vf) = _linear_filter(b,a,X,Dim=-1,Vi=None)  implemented using Direct Form II transposed flow diagram. If Vi is not given, Vf is not returned.";
- 
-static PyObject *sigtools_linear_filter(PyObject *dummy, PyObject *args) {
-	PyObject *b=NULL, *a=NULL, *X=NULL, *Vi=NULL;
-	PyArrayObject *arY=NULL, *arb=NULL, *ara=NULL, *arX=NULL, *arVi=NULL, *arVf=NULL;
-	Generic_Array x, y, *vi=NULL, *vf=NULL;
-	Generic_Vector Vb, Va;
-	int dim = -1, typenum, thedim;
-	char *ara_ptr, input_flag = 0;
-	BasicFilterFunction *basic_filter;
-	
-	if (!PyArg_ParseTuple(args, "OOO|iO", &b, &a, &X, &dim, &Vi))
-	  return NULL;
-
-
-	typenum = PyArray_ObjectType(b, 0);  
-	typenum = PyArray_ObjectType(a, typenum);
-	typenum = PyArray_ObjectType(X, typenum);
-	if (Vi != NULL) typenum = PyArray_ObjectType(Vi, typenum);
-
-	arY = NULL; arVf = NULL; 
-	ara = NULL; arb = NULL; arX = NULL; arVi = NULL;
-	ara = (PyArrayObject *)PyArray_ContiguousFromObject(a, typenum, 1, 1);
-	arb = (PyArrayObject *)PyArray_ContiguousFromObject(b, typenum, 1, 1);
-	arX = (PyArrayObject *)PyArray_FromObject(X, typenum, 0, 0);
-	if (ara == NULL || arb == NULL || arX == NULL) goto fail;
-
-	if (dim < -arX->nd || dim > arX->nd - 1) {
-	  PyErr_SetString(PyExc_ValueError, 
-			  "selected axis is out of range");
-	  goto fail;
-	}
-
-	if (dim < 0) 
-	  thedim = arX->nd + dim;
-	else
-	  thedim = dim;
-
-	if (Vi != NULL) {
-	  arVi = (PyArrayObject *)PyArray_FromObject(Vi, typenum, arX->nd, arX->nd);
-	  if (arVi == NULL) goto fail;
-	  input_flag = (PyArray_Size((PyObject *)arVi) > 0);
-	}
-
-	arY = (PyArrayObject *)PyArray_SimpleNew(arX->nd, arX->dimensions, typenum);
-	if (arY == NULL) goto fail;
-
-	if (input_flag) {
-	  arVf = (PyArrayObject *)PyArray_SimpleNew(arVi->nd, arVi->dimensions, typenum);
-	}
-	
-       	basic_filter = BasicFilterFunctions[(int)(arX->descr->type_num)];
- 	if (basic_filter == NULL) {
- 		PyErr_SetString(PyExc_ValueError, 
- 			"linear_filter not available for this type");
- 		goto fail;
- 	}
-
-	/* copy header information to generic structures ready 
-	    to transfer to non-Python-Specific code */
-
-	Py_copy_info_vec(&Va, ara);
-	Py_copy_info_vec(&Vb, arb);
-	Py_copy_info(&x, arX);
-	Py_copy_info(&y, arY);
-	/* Skip over leading zeros in vector representing denominator (a)*/
-	ara_ptr = ara->data;
-	while(memcmp(ara_ptr,Va.zero,Va.elsize) == 0) {
-	  ara_ptr += Va.elsize;
-	  Va.data = ara_ptr;
-	  Va.numels--;
-	}
-
-	if (input_flag) {
-	  if (arVi->dimensions[thedim] != (Va.numels > Vb.numels ? Va.numels : Vb.numels) - 1) {
-	    PyErr_SetString(PyExc_ValueError,
-			    "The number of initial conditions must be max([len(a),len(b)]) - 1");
-	    goto fail2;
-	  }
-	  vi = (Generic_Array *)malloc(sizeof(Generic_Array));
-	  vf = (Generic_Array *)malloc(sizeof(Generic_Array));
-	  Py_copy_info(vi, arVi);
-	  Py_copy_info(vf, arVf);
-	}
-
-	/* If dimension to filter along is negative, make it the
-	   correct positive dimension */
-
-        /* fprintf(stderr, "Here.\n"); */
-
-        if (Vi != NULL) {
-                fprintf(stderr, "%s: Vs and Vf has %d and %d dims\n", __func__,
-                                arVi->nd, arVf->nd);
-
-        }
-	RawFilter(Vb, Va, x, y, vi, vf, basic_filter, thedim);
-        /* fprintf(stderr, "Now, Here.\n");*/
-
-
-	PyDataMem_FREE(Va.zero);
-	PyDataMem_FREE(Vb.zero);
-	PyDataMem_FREE(x.zero);
-	PyDataMem_FREE(y.zero);
-	
-	Py_XDECREF(ara);
-	Py_XDECREF(arb);
-	Py_XDECREF(arX);
-	Py_XDECREF(arVi);
-
-	if (!input_flag) {
-	  return PyArray_Return(arY);
-	}
-	else {
-	  PyDataMem_FREE(vi->zero);
-	  PyDataMem_FREE(vf->zero);
-	  free(vi); free(vf);
-	  return Py_BuildValue("(NN)",arY,arVf);
- 	}
-
-
- fail2:
-	PyDataMem_FREE(Va.zero);
-	PyDataMem_FREE(Vb.zero);
-	PyDataMem_FREE(x.zero);
-	PyDataMem_FREE(y.zero);
-	
- fail:
-	Py_XDECREF(ara);
-	Py_XDECREF(arb);
-	Py_XDECREF(arX);
-	Py_XDECREF(arVi);
-	Py_XDECREF(arVf);
-	Py_XDECREF(arY);
-        return NULL;
-}
-
-
 static char doc_remez[] = "h = _remez(numtaps, bands, des, weight, type, Hz, maxiter, grid_density) \n  returns the optimal (in the Chebyshev/minimax sense) FIR filter impulse \n  response given a set of band edges, the desired response on those bands,\n  and the weight given to the error in those bands.  Bands is a monotonic\n   vector with band edges given in frequency domain where Hz is the sampling\n   frequency.";
  
-static PyObject *sigtools_remez(PyObject *dummy, PyObject *args) {
+static PyObject *sigtools_remez(PyObject *NPY_UNUSED(dummy), PyObject *args) {
         PyObject *bands, *des, *weight;
         int k, numtaps, numbands, type = BANDPASS, err; 
 	PyArrayObject *a_bands=NULL, *a_des=NULL, *a_weight=NULL;
@@ -2111,7 +1566,7 @@ extern void f_medfilt2(float*,float*,intp*,intp*);
 extern void d_medfilt2(double*,double*,intp*,intp*);
 extern void b_medfilt2(unsigned char*,unsigned char*,intp*,intp*);
 
-static PyObject *sigtools_median2d(PyObject *dummy, PyObject *args)
+static PyObject *sigtools_median2d(PyObject *NPY_UNUSED(dummy), PyObject *args)
 {
     PyObject *image=NULL, *size=NULL;
     int typenum;
@@ -2169,16 +1624,16 @@ static PyObject *sigtools_median2d(PyObject *dummy, PyObject *args)
 
 }
 
-#include "newsig.c"
+#include "lfilter.inc"
 
 static struct PyMethodDef toolbox_module_methods[] = {
 	{"_correlateND", sigtools_correlateND, METH_VARARGS, doc_correlateND},
 	{"_convolve2d", sigtools_convolve2d, METH_VARARGS, doc_convolve2d},
 	{"_order_filterND", sigtools_order_filterND, METH_VARARGS, doc_order_filterND},
-	{"_linear_filter",sigtools_linear_filter2, METH_VARARGS, doc_linear_filter},
+	{"_linear_filter",sigtools_linear_filter, METH_VARARGS, doc_linear_filter},
 	{"_remez",sigtools_remez, METH_VARARGS, doc_remez},
 	{"_medfilt2d", sigtools_median2d, METH_VARARGS, doc_median2d},
-	{NULL,		NULL, 0}		/* sentinel */
+	{NULL, NULL, 0, NULL}		/* sentinel */
 };
 
 /* Initialization function for the module (*must* be called initsigtools) */
