@@ -658,7 +658,7 @@ class KrylovJacobian(Jacobian):
     """
 
     def __init__(self, x0, f0, func, rdiff=None,
-                 method='gmres',
+                 method='lgmres',
                  inner_tol=1e-6, inner_maxiter=20, inner_M=None,
                  outer_k=6, **kw):
 
