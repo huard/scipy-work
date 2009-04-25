@@ -50,7 +50,7 @@ Simple iterations:
 # Copyright (C) 2009, Pauli Virtanen <pav@iki.fi>
 # Distributed under the same license as Scipy.
 
-import math
+import sys
 import numpy as np
 from numpy.linalg import norm, solve
 from numpy import asarray, dot, vdot
@@ -206,6 +206,7 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
 
         if verbose:
             print "%d:  |F(x)|=%g" % (n, norm(Fx))
+            sys.stdout.flush()
     else:
         raise NoConvergence(_array_like(x, x0))
 
@@ -600,22 +601,31 @@ class KrylovJacobian(Jacobian):
     """
     Find a root of a function, using Krylov approximation for inverse Jacobian.
 
+    This method is suitable for solving large-scale problems.
+
     Parameters
     ----------
     %(params_basic)s
     rdiff : float, optional
         Relative step size to use in numerical differentiation.
-    method : {'gmres', 'bicgstab', 'cgs', 'minres'} or function
+    method : {'lgmres', 'gmres', 'bicgstab', 'cgs', 'minres'} or function
         Krylov method to use to approximate the Jacobian.
         Can be a string, or a function implementing the same interface as
         the iterative solvers in `scipy.sparse.linalg`.
+
+        The default is `scipy.sparse.linalg.lgmres`.
     inner_tol, inner_maxiter, inner_M, ...
         Parameters to pass on to the \"inner\" Krylov solver.
+        See `scipy.sparse.linalg.gmres` for details.
+    outer_k : int, optional
+        Size of the subspace kept across LGMRES nonlinear iterations.
+        See `scipy.sparse.linalg.lgmres` for details.
     %(params_extra)s
 
     See Also
     --------
     scipy.sparse.linalg.gmres
+    scipy.sparse.linalg.lgmres
 
     Notes
     -----
@@ -628,19 +638,30 @@ class KrylovJacobian(Jacobian):
     .. math:: J v \approx (f(x + \omega*v/|v|) - f(x)) / \omega
 
     Due to the use of iterative matrix inverses, these methods can
-    deal with large-scale problems.
+    deal with large nonlinear problems.
 
-    For a review on Newton-Krylov methods, see for example [KK]_.
+    Scipy's `scipy.sparse.linalg` module offers a selection of Krylov
+    solvers to choose from. The default here is `lgmres`, which is a
+    variant of restarted GMRES iteration that reuses some of the
+    information obtained in the previous Newton steps to invert
+    Jacobians in subsequent steps.
+
+    For a review on Newton-Krylov methods, see for example [KK]_,
+    and for the LGMRES sparse inverse method, see [BJM]_.
 
     References
     ----------
     .. [KK] D.A. Knoll and D.E. Keyes, J. Comp. Phys. 193, 357 (2003).
+    .. [BJM] A.H. Baker and E.R. Jessup and T. Manteuffel,
+             SIAM J. Matrix Anal. Appl. 26, 962 (2005).
 
     """
 
     def __init__(self, x0, f0, func, rdiff=None,
                  method='gmres',
-                 inner_tol=1e-6, inner_maxiter=50, inner_M=None, **kw):
+                 inner_tol=1e-6, inner_maxiter=20, inner_M=None,
+                 outer_k=6, **kw):
+
         self.x0 = x0
         self.f0 = f0
         self.func = func
@@ -652,12 +673,25 @@ class KrylovJacobian(Jacobian):
         self.method = dict(
             bicgstab=scipy.sparse.linalg.bicgstab,
             gmres=scipy.sparse.linalg.gmres,
+            lgmres=scipy.sparse.linalg.lgmres,
             cgs=scipy.sparse.linalg.cgs,
             minres=scipy.sparse.linalg.minres,
             ).get(method, method)
-        
+
         self.method_kw = dict(tol=inner_tol, maxiter=inner_maxiter,
                               M=inner_M)
+
+        if self.method is scipy.sparse.linalg.gmres:
+            # Replace GMRES's outer iteration with Newton steps
+            self.method_kw['restrt'] = inner_maxiter
+            self.method_kw['maxiter'] = 1
+        elif self.method is scipy.sparse.linalg.lgmres:
+            self.method_kw['outer_k'] = outer_k
+            # Replace LGMRES's outer iteration with Newton steps
+            self.method_kw['maxiter'] = 1
+            # Carry LGMRES's `outer_v` vectors across nonlinear iterations
+            self.method_kw.setdefault('outer_v', [])
+
         for key, value in kw.items():
             if not key.startswith('inner_'):
                 raise ValueError("Unknown parameter %s" % key)
@@ -690,70 +724,6 @@ class KrylovJacobian(Jacobian):
         self.x0 = x
         self.f0 = f
         self._update_diff_step()
-
-class LGMRESJacobian(KrylovJacobian):
-    """
-    Find a root of a function, using LGMRES/Krylov approximation
-    for the inverse Jacobian.
-
-    This method is suitable for solving large-scale problems.
-
-    Parameters
-    ----------
-    %(params_basic)s
-    rdiff : float, optional
-        Relative step size to use in numerical differentiation.
-    inner_tol, inner_maxiter, inner_M : optional
-        Parameters to pass on to the \"inner\" Krylov solver.
-        See `scipy.sparse.linalg.lgmres` for details.
-    outer_k : int, optional
-        Size of the subspace kept across nonlinear iterations.
-    %(params_extra)s
-
-    See Also
-    --------
-    scipy.optimize.newton_krylov
-    scipy.sparse.linalg.lgmres
-
-    Notes
-    -----
-    This method is a Newton-Krylov method (see `newton_krylov` for details),
-    which uses the LGMRES [BJM] extension of the restarted GMRES algorithm
-    to invert the Jacobian matrix.
-
-    LGMRES is advantageous in nonlinear problems, since it can reuse some
-    of the information obtained in the previous Newton steps.
-
-    References
-    ----------
-    For a review on Newton-Krylov methods, see for example [KK]_,
-    and for the LGMRES sparse inverse method, see [BJM]_.
-
-    .. [KK] D.A. Knoll and D.E. Keyes, J. Comp. Phys. 193, 357 (2003).
-    .. [BJM] A.H. Baker and E.R. Jessup and T. Manteuffel,
-             SIAM J. Matrix Anal. Appl. 26, 962 (2005).
-
-    """
-
-    def __init__(self, x0, f0, func, rdiff=None,
-                 inner_tol=1e-6, inner_maxiter=50, inner_M=None,
-                 outer_k=6, **kw):
-
-        KrylovJacobian.__init__(self,
-                                x0, f0, func, rdiff=rdiff,
-                                method=scipy.sparse.linalg.lgmres,
-                                inner_tol=inner_tol,
-                                inner_maxiter=inner_maxiter,
-                                inner_inner_m=inner_maxiter, 
-                                inner_M=inner_M,
-                                inner_outer_k=outer_k,
-                                **kw)
-
-        # Replace the outer LGMRES loop by the nonlinear Newton iteration
-        self.method_kw['outer_maxiter'] = 1
-
-        # Carry LGMRES's `outer_v` vectors across nonlinear iterations
-        self.method_kw.setdefault('outer_v', [])
 
 
 #------------------------------------------------------------------------------
@@ -796,4 +766,3 @@ vackar = _broyden_wrapper('vackar', Vackar)
 excitingmixing = _broyden_wrapper('excitingmixing', ExcitingMixing)
 
 newton_krylov = _broyden_wrapper('newton_krylov', KrylovJacobian)
-newton_lgmres = _broyden_wrapper('newton_lgmres', LGMRESJacobian)
