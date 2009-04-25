@@ -85,7 +85,7 @@ def _as_inexact(x):
 
 def _array_like(x, x0):
     """Return ndarray `x` as same array subclass and shape as `x0`"""
-    x.shape = np.shape(x0)
+    x = np.reshape(x, np.shape(x0))
     wrap = getattr(x0, '__array_wrap__', x.__array_wrap__)
     return wrap(x)
 
@@ -169,7 +169,7 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
                                      x_tol=x_tol, x_rtol=x_rtol,
                                      iter=iter, norm=tol_norm)
 
-    func = lambda x: _as_inexact(F(x)).flatten()
+    func = lambda z: _as_inexact(F(_array_like(z, x0))).flatten()
     x = _as_inexact(x0).flatten()
 
     dx = np.inf
