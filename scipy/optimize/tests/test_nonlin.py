@@ -125,6 +125,98 @@ class TestSecant(TestCase):
         # .. [Ey] V. Eyert, J. Comp. Phys., 124, 271 (1996).
         self._check_secant(nonlin.Anderson, M=3, w0=0, npoints=3)
 
+class TestJacobianDotSolve(object):
+    """Check that solve/dot methods in Jacobian approximations are consistent"""
+
+    def _func(self, x):
+        return x**2 - 1 + np.dot(self.A, x)
+
+    def _check_dot(self, jac_cls, complex=False, tol=1e-6, **kw):
+        np.random.seed(123)
+
+        N = 7
+        def rand(*a):
+            q = np.random.rand(*a)
+            if complex:
+                q += 1j*np.random.rand(*a)
+            return q
+
+        def assert_close(a, b, msg):
+            d = abs(a - b).max()
+            f = tol + abs(b).max()*tol
+            if d > f:
+                raise AssertionError('%s: err %g' % (msg, d))
+
+        self.A = rand(N, N)
+
+        # initialize
+        x0 = np.random.rand(N)
+        jac = jac_cls(x0, self._func(x0), self._func, **kw)
+
+        # check consistency
+        for k in xrange(2*N):
+            v = rand(N)
+
+            if hasattr(jac, '__array__'):
+                Jd = np.array(jac)
+                if hasattr(jac, 'solve'):
+                    Gv = jac.solve(v)
+                    Gv2 = np.linalg.solve(Jd, v)
+                    assert_close(Gv, Gv2, 'solve vs array')
+                if hasattr(jac, 'solveH'):
+                    Gv = jac.solveH(v)
+                    Gv2 = np.linalg.solve(Jd.T.conj(), v)
+                    assert_close(Gv, Gv2, 'solveH vs array')
+                if hasattr(jac, 'dot'):
+                    Jv = jac.dot(v)
+                    Jv2 = np.dot(Jd, v)
+                    assert_close(Jv, Jv2, 'dot vs array')
+                if hasattr(jac, 'dotH'):
+                    Jv = jac.dotH(v)
+                    Jv2 = np.dot(Jd.T.conj(), v)
+                    assert_close(Jv, Jv2, 'dotH vs array')
+
+            if hasattr(jac, 'dot') and hasattr(jac, 'solve'):
+                Jv = jac.dot(v)
+                Jv2 = jac.solve(jac.dot(Jv))
+                assert_close(Jv, Jv2, 'dot vs solve')
+
+            if hasattr(jac, 'dotH') and hasattr(jac, 'solveH'):
+                Jv = jac.dotH(v)
+                Jv2 = jac.dotH(jac.solveH(Jv))
+                assert_close(Jv, Jv2, 'dotH vs solveH')
+
+            x = rand(N)
+            jac.update(x, self._func(x))
+
+    def test_broyden1(self):
+        self._check_dot(nonlin.BroydenFirst, complex=False)
+        self._check_dot(nonlin.BroydenFirst, complex=True)
+
+    def test_broyden2(self):
+        self._check_dot(nonlin.BroydenSecond, complex=False)
+        self._check_dot(nonlin.BroydenSecond, complex=True)
+
+    def test_anderson(self):
+        self._check_dot(nonlin.Anderson, complex=False)
+        self._check_dot(nonlin.Anderson, complex=True)
+
+    def test_vackar(self):
+        self._check_dot(nonlin.Vackar, complex=False)
+        self._check_dot(nonlin.Vackar, complex=True)
+
+    def test_linearmixing(self):
+        self._check_dot(nonlin.LinearMixing, complex=False)
+        self._check_dot(nonlin.LinearMixing, complex=True)
+
+    def test_excitingmixing(self):
+        self._check_dot(nonlin.ExcitingMixing, complex=False)
+        self._check_dot(nonlin.ExcitingMixing, complex=True)
+
+    def test_krylov(self):
+        self._check_dot(nonlin.KrylovJacobian, complex=False, tol=1e-4)
+        self._check_dot(nonlin.KrylovJacobian, complex=True, tol=1e-4)
+
 class TestNonlinOldTests(TestCase):
     """ Test case for a simple constrained entropy maximization problem
     (the machine translation example of Berger et al in

@@ -105,7 +105,7 @@ The solution can be found using the `newton_krylov` solver:
 
 import sys
 import numpy as np
-from numpy.linalg import norm, solve
+from numpy.linalg import norm, solve, inv
 from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
 import scipy.lib.blas as blas
@@ -264,7 +264,7 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
             callback(x, Fx)
 
         if verbose:
-            print "%d:  |F(x)| = %g; step %g" % (n, norm(Fx), s)
+            sys.stdout.write("%d:  |F(x)| = %g; step %g\n" % (n, norm(Fx), s))
             sys.stdout.flush()
     else:
         raise NoConvergence(_array_like(x, x0))
@@ -456,10 +456,12 @@ class LowRankMatrix(object):
 
     """
 
-    def __init__(self, alpha):
+    def __init__(self, alpha, n, dtype):
         self.alpha = alpha
         self.cs = []
         self.ds = []
+        self.n = n
+        self.dtype = dtype
         self.collapsed = None
 
     @staticmethod
@@ -483,20 +485,20 @@ class LowRankMatrix(object):
         axpy, dotc = blas.get_blas_funcs(['axpy', 'dotc'], cs[:1] + [v])
 
         c0 = cs[0]
-        A = np.identity(len(cs), dtype=c0.dtype)
-        for i, c in enumerate(cs):
-            for j, d in enumerate(ds):
-                A[i,j] += dotc(d, c) / alpha
+        A = alpha * np.identity(len(cs), dtype=c0.dtype)
+        for i, d in enumerate(ds):
+            for j, c in enumerate(cs):
+                A[i,j] += dotc(d, c)
 
         q = np.zeros(len(cs), dtype=c0.dtype)
         for j, d in enumerate(ds):
             q[j] = dotc(d, v)
         q /= alpha
-        q = solve(A, q) / alpha
+        q = solve(A, q)
 
         w = v/alpha
         for c, qc in zip(cs, q):
-            w = axpy(c, w, w.size, qc)
+            w = axpy(c, w, w.size, -qc)
 
         return w
 
@@ -539,8 +541,7 @@ class LowRankMatrix(object):
         if self.collapsed is not None:
             return self.collapsed
 
-        c0 = self.cs[0]
-        Gm = self.alpha*np.identity(c0.size, dtype=c0.dtype)
+        Gm = self.alpha*np.identity(self.n, dtype=self.dtype)
         for c, d in zip(self.cs, self.ds):
             Gm += c[:,None]*d[None,:]
         return Gm
@@ -683,7 +684,7 @@ class BroydenFirst(GenericBroyden):
     def __init__(self, x0, f0, func, alpha=0.1,
                  reduction_method='none', max_rank=20):
         GenericBroyden.__init__(self, x0, f0, func)
-        self.Gm = LowRankMatrix(-alpha)
+        self.Gm = LowRankMatrix(-alpha, f0.size, f0.dtype)
 
         if isinstance(reduction_method, str):
             reduce_params = ()
@@ -703,6 +704,9 @@ class BroydenFirst(GenericBroyden):
         else:
             raise ValueError("Unknown rank reduction method '%s'" %
                              reduction_method)
+
+    def __array__(self):
+        return inv(self.Gm)
 
     def solve(self, f):
         return self.Gm.dot(f)
@@ -842,7 +846,7 @@ class Anderson(GenericBroyden):
                 b[i,j] = vdot(self.df[i], self.dx[j])
                 if i == j and self.w0 != 0:
                     b[i,j] -= vdot(self.df[i], self.df[i])*self.w0**2*self.alpha
-        gamma = solve(self.b, df_f)
+        gamma = solve(b, df_f)
 
         for m in xrange(n):
             dx += gamma[m]*(self.df[m] + self.dx[m]/self.alpha)
