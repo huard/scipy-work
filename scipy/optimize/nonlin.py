@@ -443,7 +443,7 @@ class LowRankMatrix(object):
 
     """
 
-    def __init__(self, alpha, n, dtype):
+    def __init__(self, alpha):
         self.alpha = alpha
         self.cs = []
         self.ds = []
@@ -476,6 +476,33 @@ class LowRankMatrix(object):
             w = axpy(d, w, w.size, a)
         return w
 
+    def solve(self, v):
+        """Evaluate w = M^-1 v"""
+        if len(self.cs) == 0:
+            return v/self.alpha
+
+        # (B + C D^H)^-1 = B^-1 - B^-1 C (I + D^H B^-1 C)^-1 D^H B^-1
+
+        axpy, dotc = blas.get_blas_funcs(['axpy', 'dotc'], self.cs[1:] + [v])
+
+        c0 = self.cs[0]
+        A = np.identity(len(self.cs), dtype=c0.dtype)
+        for i, c in enumerate(self.cs):
+            for j, d in enumerate(self.ds):
+                A[i,j] += dotc(d, c) / self.alpha
+
+        q = np.zeros(len(self.cs), dtype=c0.dtype)
+        for j, d in enumerate(self.ds):
+            q[j] = dotc(d, v)
+        q /= self.alpha
+        q = solve(A, q) / self.alpha
+
+        w = v/self.alpha
+        for c, qc in zip(self.cs, q):
+            w = axpy(c, w, w.size, qc)
+
+        return w
+
     def append(self, c, d):
         if self.collapsed is not None:
             self.collapsed += c[:,None] * d[None,:].conj()
@@ -492,8 +519,7 @@ class LowRankMatrix(object):
             return self.collapsed
 
         c0 = self.cs[0]
-        Gm = np.zeros((c0.size, c0.size), c0.dtype)
-        Gm += self.alpha*np.identity(c0.size)
+        Gm = self.alpha*np.identity(c0.size, dtype=c0.dtype)
         for c, d in zip(self.cs, self.ds):
             Gm += c[:,None]*d[None,:]
         return Gm
@@ -623,9 +649,9 @@ class BroydenFirst(GenericBroyden):
     """
 
     def __init__(self, x0, f0, func, alpha=0.1,
-                 reduction_method='simple', max_rank=20):
+                 reduction_method='svd', max_rank=20):
         GenericBroyden.__init__(self, x0, f0, func)
-        self.Gm = LowRankMatrix(-alpha, f0.size, f0.dtype)
+        self.Gm = LowRankMatrix(-alpha)
 
         if isinstance(max_rank, int):
             reduce_params = (max_rank,)
