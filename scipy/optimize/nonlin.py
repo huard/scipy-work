@@ -625,6 +625,11 @@ class BroydenFirst(GenericBroyden):
     %(params_basic)s
     %(broyden_params)s
     %(params_extra)s
+
+    Notes
+    -----
+    This implementation of the Broyden method stores the inverse Jacobian.
+
     """
 
     def __init__(self, x0, f0, func, alpha=0.1,
@@ -675,6 +680,11 @@ class BroydenSecond(BroydenFirst):
     %(params_basic)s
     %(broyden_params)s
     %(params_extra)s
+
+    Notes
+    -----
+    This implementation of the Broyden method stores the inverse Jacobian.
+
     """
 
     def solve(self, f):
@@ -1020,11 +1030,11 @@ def _nonlin_wrapper(name, jac):
     """
     import inspect
     args, varargs, varkw, defaults = inspect.getargspec(jac.__init__)
-    kwargs = dict(zip(args[-len(defaults):], defaults))
-    kw_str = ", ".join(["%s=%r" % (k, v) for k, v in kwargs.items()])
+    kwargs = zip(args[-len(defaults):], defaults)
+    kw_str = ", ".join(["%s=%r" % (k, v) for k, v in kwargs])
     if kw_str:
         kw_str = ", " + kw_str
-    kwkw_str = ", ".join(["%s=%s" % (k, k) for k, v in kwargs.items()])
+    kwkw_str = ", ".join(["%s=%s" % (k, k) for k, v in kwargs])
     if kwkw_str:
         kwkw_str = ", " + kwkw_str
 
