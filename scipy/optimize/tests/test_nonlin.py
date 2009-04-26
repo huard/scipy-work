@@ -54,7 +54,7 @@ class TestNonlin(object):
     """
 
     def _check_func(self, f, func, f_tol=1e-2):
-        x = func(f, f.xin, f_tol=f_tol, maxiter=100)
+        x = func(f, f.xin, f_tol=f_tol, maxiter=100, verbose=1)
         assert np.absolute(f(x)).max() < f_tol
 
     @dec.knownfailureif(True)
@@ -101,10 +101,10 @@ class TestSecant(TestCase):
                 assert not np.allclose(dx, jac.solve(df))
 
     def test_broyden1(self):
-        self._check_secant(nonlin.BroydenFirst)
+        self._check_secant(nonlin.BroydenFirst, reduction_method='none')
         
     def test_broyden2(self):
-        self._check_secant(nonlin.BroydenSecond)
+        self._check_secant(nonlin.BroydenSecond, reduction_method='none')
 
     def test_broyden1_sherman_morrison(self):
         # Check that BroydenFirst is as expected for the 1st iteration
