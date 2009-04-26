@@ -254,6 +254,7 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
         else:
             dx = -jacobian.solve(Fx)
             step = dx
+            s = 1.0
         x += step
         Fx = func(x)
         jacobian.update(x.copy(), Fx)
@@ -304,7 +305,7 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
         return (func(s + ds) - f0) / ds
 
     xtol = 1e-2
-    stpmin = 1e-4 * dx_norm
+    stpmin = 1e-8 * dx_norm
     stpmax = 50. * dx_norm
     stp = dx_norm
 
