@@ -108,6 +108,7 @@ import numpy as np
 from numpy.linalg import norm, solve
 from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
+import scipy.lib.blas as blas
 import minpack2
 
 __all__ = [
@@ -431,6 +432,183 @@ class GenericBroyden(Jacobian):
         self.last_f = f
         self.last_x = x
 
+class LowRankMatrix(object):
+    r"""
+    A matrix represented as
+
+    .. math:: \alpha I + \sum_{n=0}^{n=M} c_n d_n^\dagger
+
+    However, if the rank of the matrix reaches the dimension of the vectors,
+    full matrix representation will be used thereon.
+
+    """
+
+    def __init__(self, alpha, n, dtype):
+        self.alpha = alpha
+        self.cs = []
+        self.ds = []
+        self.collapsed = None
+
+    def dot(self, v):
+        """Evaluate w = M v"""
+        if self.collapsed is not None:
+            return np.dot(self.collapsed, v)
+
+        axpy, scal, dotc = blas.get_blas_funcs(['axpy', 'scal', 'dotc'],
+                                               self.cs[1:] + [v])
+        w = self.alpha * v
+        for c, d in zip(self.cs, self.ds):
+            a = dotc(d, v)
+            w = axpy(c, w, w.size, a)
+        return w
+
+    def dotH(self, v):
+        """Evaluate w = M^H v"""
+        if self.collapsed is not None:
+            return np.dot(self.collapsed.T.conj(), v)
+
+        axpy, scal, dotc = blas.get_blas_funcs(['axpy', 'scal', 'dotc'],
+                                               self.cs[1:] + [v])
+        w = np.array(v, copy=True)
+        w = scal(self.alpha, w)
+        for c, d in zip(self.cs, self.ds):
+            a = dotc(c, v)
+            w = axpy(d, w, w.size, a)
+        return w
+
+    def append(self, c, d):
+        if self.collapsed is not None:
+            self.collapsed += c[:,None] * d[None,:].conj()
+            return
+
+        self.cs.append(c)
+        self.ds.append(d)
+
+        if len(self.cs) > c.size:
+            self.collapse()
+
+    def __array__(self):
+        if self.collapsed is not None:
+            return self.collapsed
+
+        c0 = self.cs[0]
+        Gm = np.zeros((c0.size, c0.size), c0.dtype)
+        Gm += self.alpha*np.identity(c0.size)
+        for c, d in zip(self.cs, self.ds):
+            Gm += c[:,None]*d[None,:]
+        return Gm
+
+    def collapse(self):
+        """Collapse the low-rank matrix to a full-rank one."""
+        self.collapsed = np.array(self)
+        self.cs = None
+        self.ds = None
+        self.alpha = None
+
+    def simple_reduce(self, rank):
+        """
+        Reduce the rank of the matrix by dropping oldest vectors.
+        """
+        if self.collapsed is not None:
+            return
+        assert rank > 0
+        while len(self.cs) > rank:
+            del self.cs[0]
+            del self.ds[0]
+
+    def svd_reduce(self, max_rank, to_retain=None, big=True):
+        """
+        Reduce the rank of the matrix by retaining some SVD components.
+
+        This algorithm is the one described in [vR]_.  Note that the
+        SVD decomposition can be done by solving only a problem whose
+        size is the effective rank of this matrix, which is viable
+        even for large problems.
+
+        Parameters
+        ----------
+        max_rank : int
+            Maximum rank of this matrix after reduction.
+        to_retain : int, optional
+            Number of SVD components to retain when reduction is done
+            (ie. rank > max_rank). Default is ``max_rank - 2``.
+        big : boolean, optional
+            Whether to retain the big or small SVD components.
+
+        References
+        ----------
+        .. [vR] B.A. van der Rotten, PhD thesis,
+           \"A limited memory Broyden method to solve high-dimensional
+           systems of nonlinear equations\". Mathematisch Instituut,
+           Universiteit Leiden, The Netherlands (2003).
+           
+           http://www.math.leidenuniv.nl/scripties/Rotten.pdf
+
+        """
+        if self.collapsed is not None:
+            return
+
+        from scipy.linalg import qr, svd, inv
+
+        p = max_rank
+        if to_retain is not None:
+            q = to_retain
+        else:
+            q = p - 2
+
+        if self.cs:
+            p = min(p, len(self.cs[0]))
+        q = max(0, min(q, p-1))
+
+        m = len(self.cs)
+        if m < p:
+            # nothing to do
+            return
+
+        C = np.array(self.cs).T
+        D = np.array(self.ds).T
+
+        D, R = qr(D, mode='qr', econ=True)
+        C = dot(C, R.T.conj())
+
+        U, S, WH = svd(C, full_matrices=False, compute_uv=True)
+
+        C = dot(C, inv(WH))
+        D = dot(D, WH.T.conj())
+
+        if big:
+            for k in xrange(q):
+                self.cs[k] = C[:,k].copy()
+                self.ds[k] = D[:,k].copy()
+        else:
+            n = C.shape[1]
+            for k in xrange(q):
+                self.cs[k] = C[:,n-q+k].copy()
+                self.ds[k] = D[:,n-q+k].copy()
+
+        del self.cs[q:]
+        del self.ds[q:]
+
+_doc_parts['broyden_params'] = """
+    alpha : float, optional
+        Initial guess for the Jacobian is (-1/alpha).
+    reduction_method : str or tuple, optional
+        Method used in ensuring that the rank of the Broyden matrix
+        stays low. Can either be a string giving the name of the method,
+        or a tuple of the form ``(method, param1, param2, ...)``
+        that gives the name of the method and values for additional parameters.
+
+        Methods available:
+            - ``none``: no reduction, allow infinite rank.
+            - ``simple``: drop oldest matrix columns. Has no extra parameters.
+            - ``svd``: keep only the most significant SVD components.
+              Extra parameters:
+                  - ``to_retain`: number of SVD components to retain when
+                    rank reduction is done. Default is ``max_rank - 2``.
+    max_rank : int or tuple, optional
+        Maximum rank for the Broyden matrix.
+    """.strip()
+
 class BroydenFirst(GenericBroyden):
     """
     Find a root of a function, using Broyden's first Jacobian approximation.
@@ -440,24 +618,46 @@ class BroydenFirst(GenericBroyden):
     Parameters
     ----------
     %(params_basic)s
-    alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).
+    %(broyden_params)s
     %(params_extra)s
     """
 
-    def __init__(self, x0, f0, func, alpha=0.1):
+    def __init__(self, x0, f0, func, alpha=0.1,
+                 reduction_method='simple', max_rank=20):
         GenericBroyden.__init__(self, x0, f0, func)
-        self.Gm = -alpha * np.identity(x0.size)
+        self.Gm = LowRankMatrix(-alpha, f0.size, f0.dtype)
+
+        if isinstance(max_rank, int):
+            reduce_params = (max_rank,)
+        else:
+            reduce_params = max_rank
+        reduce_params = (reduce_params[0]-1,) + reduce_params[1:]
+
+        if reduction_method == 'svd':
+            reduce_params = reduce_params + (True,)
+            self._reduce = lambda: self.Gm.svd_reduce(*reduce_params)
+        elif reduction_method == 'simple':
+            self._reduce = lambda: self.Gm.simple_reduce(*reduce_params)
+        elif reduction_method in ('none', None):
+            self._reduce = lambda: None
+        else:
+            raise ValueError("Unknown rank reduction method '%s'" %
+                             reduction_method)
 
     def solve(self, f):
-        return dot(self.Gm, f)
+        return self.Gm.dot(f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
-        s = dot(self.Gm.T, dx)
-        y = dot(self.Gm, df)
-        self.Gm += (dx - y)[:,None] * s[None,:] / dot(dx, y)
-        
-class BroydenSecond(GenericBroyden):
+        self._reduce() # reduce first to preserve secant condition
+
+        s = self.Gm.dotH(dx)
+        y = self.Gm.dot(df)
+        c = (dx - y) / vdot(dx, y)
+        d = s
+        self.Gm.append(c, d)
+        #self.Gm += (dx - y)[:,None] * s[None,:] / dot(dx, y)
+
+class BroydenSecond(BroydenFirst):
     """
     Find a root of a function, using Broyden\'s second Jacobian approximation.
 
@@ -466,21 +666,21 @@ class BroydenSecond(GenericBroyden):
     Parameters
     ----------
     %(params_basic)s
-    alpha : float, optional
-        Initial guess for the Jacobian is (-1/alpha).
+    %(broyden_params)s
     %(params_extra)s
     """
 
-    def __init__(self, x0, f0, func, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0, func)
-        self.Gm = -alpha * np.identity(x0.size)
-
     def solve(self, f):
-        return dot(self.Gm, f)
+        return self.Gm.dot(f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
-        self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
-        
+        self._reduce() # reduce first to preserve secant condition
+
+        c = (dx - self.Gm.dot(df)) / df_norm
+        d = df / df_norm
+        self.Gm.append(c, d)
+        #self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
+
 #------------------------------------------------------------------------------
 # Broyden-like (restricted memory)
 #------------------------------------------------------------------------------
