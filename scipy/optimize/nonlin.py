@@ -504,6 +504,17 @@ class LowRankMatrix(object):
         self.ds = None
         self.alpha = None
 
+    def restart_reduce(self, rank):
+        """
+        Reduce the rank of the matrix by dropping all vectors.
+        """
+        if self.collapsed is not None:
+            return
+        assert rank > 0
+        if len(self.cs) > rank:
+            del self.cs[:]
+            del self.ds[:]
+
     def simple_reduce(self, rank):
         """
         Reduce the rank of the matrix by dropping oldest vectors.
@@ -593,7 +604,8 @@ _doc_parts['broyden_params'] = """
 
         Methods available:
             - ``none``: no reduction, allow infinite rank.
-            - ``simple``: drop oldest matrix columns. Has no extra parameters.
+            - ``restart``: drop all matrix columns. Has no extra parameters.
+            - ``simple``: drop oldest matrix column. Has no extra parameters.
             - ``svd``: keep only the most significant SVD components.
               Extra parameters:
                   - ``to_retain`: number of SVD components to retain when
@@ -620,16 +632,19 @@ class BroydenFirst(GenericBroyden):
         GenericBroyden.__init__(self, x0, f0, func)
         self.Gm = LowRankMatrix(-alpha)
 
-        if isinstance(max_rank, int):
-            reduce_params = (max_rank,)
+        if isinstance(reduction_method, str):
+            reduce_params = ()
         else:
-            reduce_params = max_rank
-        reduce_params = (reduce_params[0]-1,) + reduce_params[1:]
+            reduce_params = reduction_method[1:]
+            reduction_method = reduction_method[0]
+        reduce_params = (max_rank - 1,) + reduce_params[1:]
 
         if reduction_method == 'svd':
             self._reduce = lambda: self.Gm.svd_reduce(*reduce_params)
         elif reduction_method == 'simple':
             self._reduce = lambda: self.Gm.simple_reduce(*reduce_params)
+        elif reduction_method == 'restart':
+            self._reduce = lambda: self.Gm.restart_reduce(*reduce_params)
         elif reduction_method in ('none', None):
             self._reduce = lambda: None
         else:
