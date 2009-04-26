@@ -476,33 +476,6 @@ class LowRankMatrix(object):
             w = axpy(d, w, w.size, a)
         return w
 
-    def solve(self, v):
-        """Evaluate w = M^-1 v"""
-        if len(self.cs) == 0:
-            return v/self.alpha
-
-        # (B + C D^H)^-1 = B^-1 - B^-1 C (I + D^H B^-1 C)^-1 D^H B^-1
-
-        axpy, dotc = blas.get_blas_funcs(['axpy', 'dotc'], self.cs[1:] + [v])
-
-        c0 = self.cs[0]
-        A = np.identity(len(self.cs), dtype=c0.dtype)
-        for i, c in enumerate(self.cs):
-            for j, d in enumerate(self.ds):
-                A[i,j] += dotc(d, c) / self.alpha
-
-        q = np.zeros(len(self.cs), dtype=c0.dtype)
-        for j, d in enumerate(self.ds):
-            q[j] = dotc(d, v)
-        q /= self.alpha
-        q = solve(A, q) / self.alpha
-
-        w = v/self.alpha
-        for c, qc in zip(self.cs, q):
-            w = axpy(c, w, w.size, qc)
-
-        return w
-
     def append(self, c, d):
         if self.collapsed is not None:
             self.collapsed += c[:,None] * d[None,:].conj()
@@ -542,14 +515,16 @@ class LowRankMatrix(object):
             del self.cs[0]
             del self.ds[0]
 
-    def svd_reduce(self, max_rank, to_retain=None, big=True):
+    def svd_reduce(self, max_rank, to_retain=None):
         """
         Reduce the rank of the matrix by retaining some SVD components.
 
-        This algorithm is the one described in [vR]_.  Note that the
-        SVD decomposition can be done by solving only a problem whose
-        size is the effective rank of this matrix, which is viable
-        even for large problems.
+        This algorithm is the \"Broyden Rank Reduction Inverse\"
+        method described in [vR]_.
+
+        Note that the SVD decomposition can be done by solving only a
+        problem whose size is the effective rank of this matrix, which
+        is viable even for large problems.
 
         Parameters
         ----------
@@ -558,8 +533,6 @@ class LowRankMatrix(object):
         to_retain : int, optional
             Number of SVD components to retain when reduction is done
             (ie. rank > max_rank). Default is ``max_rank - 2``.
-        big : boolean, optional
-            Whether to retain the big or small SVD components.
 
         References
         ----------
@@ -602,15 +575,9 @@ class LowRankMatrix(object):
         C = dot(C, inv(WH))
         D = dot(D, WH.T.conj())
 
-        if big:
-            for k in xrange(q):
-                self.cs[k] = C[:,k].copy()
-                self.ds[k] = D[:,k].copy()
-        else:
-            n = C.shape[1]
-            for k in xrange(q):
-                self.cs[k] = C[:,n-q+k].copy()
-                self.ds[k] = D[:,n-q+k].copy()
+        for k in xrange(q):
+            self.cs[k] = C[:,k].copy()
+            self.ds[k] = D[:,k].copy()
 
         del self.cs[q:]
         del self.ds[q:]
@@ -649,7 +616,7 @@ class BroydenFirst(GenericBroyden):
     """
 
     def __init__(self, x0, f0, func, alpha=0.1,
-                 reduction_method='svd', max_rank=20):
+                 reduction_method='none', max_rank=20):
         GenericBroyden.__init__(self, x0, f0, func)
         self.Gm = LowRankMatrix(-alpha)
 
@@ -660,7 +627,6 @@ class BroydenFirst(GenericBroyden):
         reduce_params = (reduce_params[0]-1,) + reduce_params[1:]
 
         if reduction_method == 'svd':
-            reduce_params = reduce_params + (True,)
             self._reduce = lambda: self.Gm.svd_reduce(*reduce_params)
         elif reduction_method == 'simple':
             self._reduce = lambda: self.Gm.simple_reduce(*reduce_params)
