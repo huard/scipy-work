@@ -350,11 +350,32 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     return stp*sign
 
 class Jacobian(object):
+    """
+    Jacobian approximation.
+
+    The optional methods come useful when implementing trust region
+    etc.  algorithms that often require evaluating transposes of the
+    Jacobian.
+
+    Methods
+    -------
+    solve
+        Evaluate inverse Jacobian--vector product
+    dot : optional
+        Evaluate Jacobian--vector product
+    solveH : optional
+        Evaluate Hermitian conjugated inverse Jacobian--vector product
+    dotH : optional
+        Evaluate Hermitian conjugated Jacobian--vector product
+
+    """
     def __init__(self, x0, f0, func, **kw):
         raise NotImplementedError
     def solve(self, rhs):
+        """Evaluate inverse Jacobian--vector product"""
         raise NotImplementedError
     def update(self, x, F):
+        """Update Jacobian"""
         raise NotImplementedError
 
 class TerminationCondition(object):
@@ -449,32 +470,67 @@ class LowRankMatrix(object):
         self.ds = []
         self.collapsed = None
 
+    @staticmethod
+    def _dot(v, alpha, cs, ds):
+        axpy, scal, dotc = blas.get_blas_funcs(['axpy', 'scal', 'dotc'],
+                                               cs[:1] + [v])
+        w = alpha * v
+        for c, d in zip(cs, ds):
+            a = dotc(d, v)
+            w = axpy(c, w, w.size, a)
+        return w
+
+    @staticmethod
+    def _solve(v, alpha, cs, ds):
+        """Evaluate w = M^-1 v"""
+        if len(cs) == 0:
+            return v/alpha
+
+        # (B + C D^H)^-1 = B^-1 - B^-1 C (I + D^H B^-1 C)^-1 D^H B^-1
+
+        axpy, dotc = blas.get_blas_funcs(['axpy', 'dotc'], cs[:1] + [v])
+
+        c0 = cs[0]
+        A = np.identity(len(cs), dtype=c0.dtype)
+        for i, c in enumerate(cs):
+            for j, d in enumerate(ds):
+                A[i,j] += dotc(d, c) / alpha
+
+        q = np.zeros(len(cs), dtype=c0.dtype)
+        for j, d in enumerate(ds):
+            q[j] = dotc(d, v)
+        q /= alpha
+        q = solve(A, q) / alpha
+
+        w = v/alpha
+        for c, qc in zip(cs, q):
+            w = axpy(c, w, w.size, qc)
+
+        return w
+
     def dot(self, v):
         """Evaluate w = M v"""
         if self.collapsed is not None:
             return np.dot(self.collapsed, v)
-
-        axpy, scal, dotc = blas.get_blas_funcs(['axpy', 'scal', 'dotc'],
-                                               self.cs[1:] + [v])
-        w = self.alpha * v
-        for c, d in zip(self.cs, self.ds):
-            a = dotc(d, v)
-            w = axpy(c, w, w.size, a)
-        return w
+        return LowRankMatrix._dot(v, self.alpha, self.cs, self.ds)
 
     def dotH(self, v):
         """Evaluate w = M^H v"""
         if self.collapsed is not None:
             return np.dot(self.collapsed.T.conj(), v)
+        return LowRankMatrix._dot(v, np.conj(self.alpha), self.ds, self.cs)
 
-        axpy, scal, dotc = blas.get_blas_funcs(['axpy', 'scal', 'dotc'],
-                                               self.cs[1:] + [v])
-        w = np.array(v, copy=True)
-        w = scal(self.alpha, w)
-        for c, d in zip(self.cs, self.ds):
-            a = dotc(c, v)
-            w = axpy(d, w, w.size, a)
-        return w
+    def solve(self, v):
+        """Evaluate w = M^-1 v"""
+        if self.collapsed is not None:
+            return solve(self.collapsed, v)
+        return LowRankMatrix._solve(v, self.alpha, self.cs, self.ds)
+
+    def solveH(self, v):
+        """Evaluate w = M^-H v"""
+        if self.collapsed is not None:
+            return solve(self.collapsed.T.conj(), v)
+        return LowRankMatrix._solve(v, np.conj(self.alpha), self.ds, self.cs)
 
     def append(self, c, d):
         if self.collapsed is not None:
@@ -659,6 +715,15 @@ class BroydenFirst(GenericBroyden):
     def solve(self, f):
         return self.Gm.dot(f)
 
+    def dot(self, f):
+        return self.Gm.solve(f)
+
+    def solveH(self, f):
+        return self.Gm.dotH(f)
+
+    def dotH(self, f):
+        return self.Gm.solveH(f)
+
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self._reduce() # reduce first to preserve secant condition
 
@@ -686,9 +751,6 @@ class BroydenSecond(BroydenFirst):
     This implementation of the Broyden method stores the inverse Jacobian.
 
     """
-
-    def solve(self, f):
-        return self.Gm.dot(f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self._reduce() # reduce first to preserve secant condition
@@ -723,7 +785,28 @@ class Anderson(GenericBroyden):
         Regularization parameter for numerical stability.
         Compared to unity, good values of the order of 0.01.
     %(params_extra)s
+
     """
+
+    # Note:
+    #
+    # Anderson method maintains a M-level secant approximation of
+    # the inverse Jacobian,
+    #
+    #     J^-1 v ~ [-alpha I + (dX + alpha dF) A^-1 dF^H ] v
+    #     A      = W + dF^H dF
+    #     W      = w0^2 diag(dF^H dF)
+    #
+    # so that (Sherman-Morrison-Woodbury)
+    #
+    #    J v ~ [ b I - b^2 C (I + b dF^H A^-1 C)^-1 dF^H ] v
+    #    C   = (dX + alpha dF) A^-1
+    #    b   = -1/alpha
+    #
+    # and after simplification
+    #
+    #    J v ~ -v/alpha + (dX/alpha + F) (dF^H dX - alpha W)^-1 F^H v
+    #
 
     def __init__(self, x0, f0, func, alpha=0.1, w0=0.01, M=5):
         GenericBroyden.__init__(self, x0, f0, func)
@@ -741,13 +824,36 @@ class Anderson(GenericBroyden):
         if n == 0:
             return dx
 
-        df_f = np.empty(n)
+        df_f = np.empty(n, dtype=f.dtype)
         for k in xrange(n):
             df_f[k] = vdot(self.df[k], f)
         gamma = solve(self.a, df_f)
 
-        for m in xrange(len(self.dx)):
+        for m in xrange(n):
             dx += gamma[m]*(self.dx[m] + self.alpha*self.df[m])
+        return dx
+
+    def dot(self, f):
+        dx = -f/self.alpha
+
+        n = len(self.dx)
+        if n == 0:
+            return dx
+
+        df_f = np.empty(n, dtype=f.dtype)
+        for k in xrange(n):
+            df_f[k] = vdot(self.df[k], f)
+
+        b = np.empty((n, n), dtype=f.dtype)
+        for i in xrange(n):
+            for j in xrange(n):
+                b[i,j] = vdot(self.df[i], self.dx[j])
+                if i == j and self.w0 != 0:
+                    b[i,j] -= vdot(self.df[i], self.df[i])*self.w0**2*self.alpha
+        gamma = solve(self.b, df_f)
+
+        for m in xrange(n):
+            dx += gamma[m]*(self.df[m] + self.dx[m]/self.alpha)
         return dx
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
@@ -762,8 +868,8 @@ class Anderson(GenericBroyden):
             self.df.pop(0)
 
         n = len(self.dx)
-        a = np.zeros((n, n))
-        
+        a = np.zeros((n, n), dtype=f.dtype)
+
         for i in xrange(n):
             for j in xrange(i, n):
                 if i == j:
@@ -807,6 +913,15 @@ class Vackar(GenericBroyden):
     def solve(self, f):
         return -f / self.d
 
+    def dot(self, f):
+        return -f * self.d
+
+    def solveH(self, f):
+        return -f / self.d.conj()
+
+    def dotH(self, f):
+        return -f * self.d.conj()
+
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.d -= (df + self.d*dx)*dx/dx_norm**2
 
@@ -834,6 +949,15 @@ class LinearMixing(GenericBroyden):
 
     def solve(self, f):
         return -f*self.alpha
+
+    def dot(self, f):
+        return -f/self.alpha
+
+    def solveH(self, f):
+        return -f*np.conj(self.alpha)
+
+    def dotH(self, f):
+        return -f/np.conj(self.alpha)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         pass
@@ -869,6 +993,15 @@ class ExcitingMixing(GenericBroyden):
 
     def solve(self, f):
         return -f*self.beta
+
+    def dot(self, f):
+        return -f/self.beta
+
+    def solve(self, f):
+        return -f*self.beta.conj()
+
+    def dot(self, f):
+        return -f/self.beta.conj()
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         incr = f*self.last_f > 0
@@ -987,7 +1120,7 @@ class KrylovJacobian(Jacobian):
             self.method_kw[key[6:]] = value
 
         self.op = scipy.sparse.linalg.LinearOperator(
-            shape=(f0.size, x0.size), matvec=self._mul, dtype=self.f0.dtype)
+            shape=(f0.size, x0.size), matvec=self.dot, dtype=self.f0.dtype)
         self._update_diff_step()
 
     def _update_diff_step(self):
@@ -995,7 +1128,7 @@ class KrylovJacobian(Jacobian):
         mf = abs(self.f0).max()
         self.omega = self.rdiff * max(1, mx) / max(1, mf)
 
-    def _mul(self, v):
+    def dot(self, v):
         nv = norm(v)
         if nv == 0:
             return 0*v
