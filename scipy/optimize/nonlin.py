@@ -306,20 +306,12 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
         return (func(s + ds) - f0) / ds
 
     xtol = 1e-2
-    stpmin = 1e-8 * dx_norm
+    stpmin = 1e-2 * dx_norm
     stpmax = 50. * dx_norm
     stp = dx_norm
 
     f = func(0.)
     g = grad(0., f)
-
-    if g > 0:
-        # The direction given is not a descent direction; go the other way.
-        g = -g
-        dx = -dx
-        sign = -1
-    else:
-        sign = 1
 
     isave = np.zeros(2, dtype=np.intc)
     dsave = np.zeros(13, dtype=np.float_)
@@ -347,7 +339,7 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
         stp = best_stp
 
     stp /= dx_norm
-    return stp*sign
+    return stp
 
 class Jacobian(object):
     """
