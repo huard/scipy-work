@@ -105,7 +105,7 @@ The solution can be found using the `newton_krylov` solver:
 
 import sys
 import numpy as np
-from numpy.linalg import norm, solve, inv
+from scipy.linalg import norm, solve, inv, qr, svd, lstsq
 from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
 import scipy.lib.blas as blas
@@ -202,7 +202,7 @@ def _set_doc(obj):
 
 def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None, line_search=True,
+                 tol_norm=None, line_search=True, levenberg_marquardt=True,
                  callback=None):
     """
     Find a root of a function, using given Jacobian approximation.
@@ -234,28 +234,27 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
         else:
             maxiter = 100*(x.size+1)
 
+    # XXX: adjust the LM parameter somewhere!
+    lmbda = 0.1
+            
     for n in xrange(maxiter):
         if condition.check(Fx, x, dx):
             break
 
+        dx = -jacobian.solve(Fx)
+
+        if levenberg_marquardt:
+            # Adjust descent direction as per Levenberg-Marquardt
+            dx, lmbda = _subspace_levenberg_marquardt(-Fx, dx, jacobian, lmbda)
+
         if line_search:
-            # XXX: determine which of the jacobian approximations stay valid
-            #      when the step length is modified
-
-            # XXX: Ensuring descent direction would be useful here?
-            dx = -jacobian.solve(Fx)
-
-            if abs(dx).max() == 0:
-                # Jacobian was faulty, fall back to gradient direction
-                dx = -Fx
-
             # Line search for Wolfe conditions for an objective function
             s = _line_search(func, x, dx)
             step = dx*s
         else:
-            dx = -jacobian.solve(Fx)
             step = dx
             s = 1.0
+
         x += step
         Fx = func(x)
         jacobian.update(x.copy(), Fx)
@@ -341,35 +340,6 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     stp /= dx_norm
     return stp
 
-class Jacobian(object):
-    """
-    Jacobian approximation.
-
-    The optional methods come useful when implementing trust region
-    etc.  algorithms that often require evaluating transposes of the
-    Jacobian.
-
-    Methods
-    -------
-    solve
-        Evaluate inverse Jacobian--vector product
-    dot : optional
-        Evaluate Jacobian--vector product
-    solveH : optional
-        Evaluate Hermitian conjugated inverse Jacobian--vector product
-    dotH : optional
-        Evaluate Hermitian conjugated Jacobian--vector product
-
-    """
-    def __init__(self, x0, f0, func, **kw):
-        raise NotImplementedError
-    def solve(self, rhs):
-        """Evaluate inverse Jacobian--vector product"""
-        raise NotImplementedError
-    def update(self, x, F):
-        """Update Jacobian"""
-        raise NotImplementedError
-
 class TerminationCondition(object):
     """
     Termination condition for an iteration. It is terminated if
@@ -425,6 +395,144 @@ class TerminationCondition(object):
         # NB: condition must succeed for rtol=inf even if norm == 0
         return ((f_norm <= self.f_tol and f_norm/self.f_rtol <= self.f0_norm)
                 and (dx_norm <= self.x_tol and dx_norm/self.x_rtol <= x_norm))
+
+#------------------------------------------------------------------------------
+# Subspace trust-region algorithm
+#------------------------------------------------------------------------------
+
+def _subspace_levenberg_marquardt(residual, newton_step, jac, lmbda,
+                                  num_krylov=0):
+    r"""
+    Computes the solution to the Levenberg-Marquardt problem in a subspace.
+
+    The task is to find
+
+    .. math:: p^* = \argmin_p || ( J ; \lambda^{1/2} I ) p -  (r; 0) ||_2
+
+    where :math:`\lambda` is a parameter related to the trust region size,
+    and `J` the Jacobian and `r` the residual.
+
+    This routine determines a 'good enough' solution to this problem, from
+    some suitable subspace.
+
+    Parameters
+    ----------
+    residual : array
+        The residual
+    newton_step : array
+        The Newton step, satisfying ``J newton_step ~ residual``
+    jac : Jacobian
+        A Jacobian approximation
+    num_krylov : int, optional
+        Number of Krylov vectors to generate
+
+    Notes
+    -----
+    Here, we are interested mostly in large-scale problems in which
+    the optimization problem cannot be solved exactly. We may not even be
+    able to evaluate :math:`J^T v`.
+
+    Hence, we look for the solution in the Krylov subspace ::
+
+        [newton_step, residual, J residual, ..., J^num_krylov residual]
+
+    This space is augmented with the vectors ::
+
+        J^T residual
+
+    if the Jacobian supports the necessary operations.
+
+    """
+
+    # Subspace Ansatz: p = U q
+    U = []
+    JU = []
+
+    def append(u, Ju=None):
+        sc = norm(u)
+        U.append(u/sc)
+        if Ju is None:
+            Ju = jac.dot(U[-1])
+            JU.append(Ju)
+        else:
+            JU.append(Ju/sc)
+
+    # Form the subspace
+    append(newton_step, residual)
+
+    if hasattr(jac, 'dot'):
+        for k in xrange(num_krylov):
+            append(JU[-1], jac.dot(JU[-1]))
+
+    if hasattr(jac, 'dotH'):
+        append(jac.dotH(residual))
+
+    # Form the coefficient matrix
+    n = residual.size
+    p = len(U)
+
+    M = np.zeros((2*n, p), residual.dtype)
+    for j, (u, Ju) in enumerate(zip(U, JU)):
+        M[:n,j] = Ju
+        # M[n:,j] initialized later
+
+    # Form rhs
+    b = np.zeros((2*n,), residual.dtype)
+    b[:n] = residual
+
+    # Solving the optimization problem
+    def solution(tau):
+        for j, u in enumerate(U):
+            M[n:,j] = u
+            M[n:,j] *= np.sqrt(tau)
+        q, residues, rank, s = lstsq(M, b)
+
+        # Piece together the best solution
+        s = np.zeros_like(newton_step)
+        for u, q in zip(U, q):
+            s += q*u
+
+        return s
+
+    # XXX: Search for the correct LM parameter:
+    s = solution(lmbda)
+
+    # Return best solution, and the correct LM parameter
+    return s, lmbda
+
+#------------------------------------------------------------------------------
+# Generic Jacobian approximation
+#------------------------------------------------------------------------------
+
+class Jacobian(object):
+    """
+    Jacobian approximation.
+
+    The optional methods come useful when implementing trust region
+    etc.  algorithms that often require evaluating transposes of the
+    Jacobian.
+
+    Methods
+    -------
+    solve
+        Evaluate inverse Jacobian--vector product
+    dot : optional
+        Evaluate Jacobian--vector product
+    solveH : optional
+        Evaluate Hermitian conjugated inverse Jacobian--vector product
+    dotH : optional
+        Evaluate Hermitian conjugated Jacobian--vector product
+    __array__ : optional
+        Form the dense Jacobian matrix. Used only for testing.
+    """
+    def __init__(self, x0, f0, func, **kw):
+        raise NotImplementedError
+    def solve(self, rhs):
+        """Evaluate inverse Jacobian--vector product"""
+        raise NotImplementedError
+    def update(self, x, F):
+        """Update Jacobian"""
+        raise NotImplementedError
 
 #------------------------------------------------------------------------------
 # Full Broyden / Quasi-Newton variants
@@ -607,8 +715,6 @@ class LowRankMatrix(object):
         if self.collapsed is not None:
             return
 
-        from scipy.linalg import qr, svd, inv
-
         p = max_rank
         if to_retain is not None:
             q = to_retain
@@ -786,14 +892,19 @@ class Anderson(GenericBroyden):
 
     # Note:
     #
-    # Anderson method maintains a M-level secant approximation of
-    # the inverse Jacobian,
+    # Anderson method maintains a rank M approximation of the inverse Jacobian,
     #
-    #     J^-1 v ~ [-alpha I + (dX + alpha dF) A^-1 dF^H ] v
+    #     J^-1 v ~ -v*alpha + (dX + alpha dF) A^-1 dF^H v
     #     A      = W + dF^H dF
     #     W      = w0^2 diag(dF^H dF)
     #
-    # so that (Sherman-Morrison-Woodbury)
+    # so that for w0 = 0 the secant condition applies for last M iterates, ie.,
+    #
+    #     J^-1 df_j = dx_j
+    #
+    # for all j = 0 ... M-1.
+    #
+    # Moreover, (from Sherman-Morrison-Woodbury formula)
     #
     #    J v ~ [ b I - b^2 C (I + b dF^H A^-1 C)^-1 dF^H ] v
     #    C   = (dX + alpha dF) A^-1
@@ -801,7 +912,7 @@ class Anderson(GenericBroyden):
     #
     # and after simplification
     #
-    #    J v ~ -v/alpha + (dX/alpha + F) (dF^H dX - alpha W)^-1 F^H v
+    #    J v ~ -v/alpha + (dX/alpha + dF) (dF^H dX - alpha W)^-1 dF^H v
     #
 
     def __init__(self, x0, f0, func, alpha=0.1, w0=0.01, M=5):
@@ -1172,10 +1283,11 @@ def _nonlin_wrapper(name, jac):
     wrapper = """
 def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
              f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
-             tol_norm=None, line_search=True, **kw):
+             tol_norm=None, levenberg_marquardt=True, line_search=True, **kw):
     jac = lambda x, f, func: %(jac)s(x, f, func %(kwkw)s, **kw)
     return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
-                        f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search)
+                        f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search,
+                        levenberg_marquardt)
 """
     wrapper = wrapper % dict(name=name, kw=kw_str, jac=jac.__name__,
                              kwkw=kwkw_str)
