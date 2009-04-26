@@ -20,8 +20,13 @@ if sphinx.__version__ < "0.5":
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
 extensions = ['sphinx.ext.autodoc', 'sphinx.ext.pngmath', 'numpydoc',
-              'phantom_import', 'autosummary', 'sphinx.ext.intersphinx',
+              'phantom_import', 'sphinx.ext.intersphinx',
               'sphinx.ext.coverage', 'only_directives', 'plot_directive']
+
+if sphinx.__version__ >= "0.7":
+    extensions.append('sphinx.ext.autosummary')
+else:
+    extensions.append('autosummary')
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
