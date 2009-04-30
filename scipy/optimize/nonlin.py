@@ -8,17 +8,6 @@ This is a collection of general-purpose nonlinear multidimensional
 solvers.  These solvers find *x* for which :math:`F(x)=0`. Both *x*
 and *F* can be multidimensional.
 
-Example:
-
->>> def F(x):
-...    '''Should converge to x=[0,0,0,0,0]'''
-...    d = [3,2,1.5,1,0.5]
-...    c = 0.01
-...    return -d * x - c*x**3
->>> import scipy.optimize
->>> x = scipy.optimize.broyden2(F, [1,1,1,1,1])
-
-
 Routines
 --------
 
@@ -44,9 +33,34 @@ Simple iterations:
    linearmixing
    vackar
 
+ 
+References
+----------
 
-Example: large problem
-----------------------
+.. [BS] P. N. Brown and Y. Saad. ''Globally convergent techniques in
+   nonlinear Newton-Krylov algorithms''
+
+   ftp://ftp.cs.umn.edu/dept/users/saad/reports/PDF/RIACS-89-57.pdf
+
+.. 
+
+
+Examples
+========
+
+Small problem
+-------------
+
+>>> def F(x):
+...    '''Should converge to x=[0,0,0,0,0]'''
+...    d = [3,2,1.5,1,0.5]
+...    c = 0.01
+...    return -d * x - c*x**3
+>>> import scipy.optimize
+>>> x = scipy.optimize.broyden2(F, [1,1,1,1,1])
+
+Large problem
+-------------
 
 Suppose that we needed to solve the following integrodifferential
 equation on the square :math:`[0,1]\times[0,1]`:
@@ -98,7 +112,7 @@ The solution can be found using the `newton_krylov` solver:
    plt.pcolor(x, y, sol)
    plt.colorbar()
    plt.show()
-
+   
 """
 # Copyright (C) 2009, Pauli Virtanen <pav@iki.fi>
 # Distributed under the same license as Scipy.
@@ -110,6 +124,7 @@ from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
 import scipy.sparse
 import scipy.lib.blas as blas
+import inspect
 import minpack2
 
 __all__ = [
@@ -201,10 +216,9 @@ def _set_doc(obj):
     if obj.__doc__:
         obj.__doc__ = obj.__doc__ % _doc_parts
 
-def nonlin_solve(F, x0, jacobian, iter=None, verbose=False,
+def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None, line_search=True, levenberg_marquardt=False,
-                 callback=None):
+                 tol_norm=None, line_search=True, callback=None):
     """
     Find a root of a function, using given Jacobian approximation.
 
@@ -225,6 +239,7 @@ def nonlin_solve(F, x0, jacobian, iter=None, verbose=False,
 
     dx = np.inf
     Fx = func(x)
+    Fx_norm = norm(Fx)
 
     jacobian = asjacobian(jacobian)
     jacobian.setup(x.copy(), Fx, func)
@@ -235,18 +250,16 @@ def nonlin_solve(F, x0, jacobian, iter=None, verbose=False,
         else:
             maxiter = 100*(x.size+1)
 
-    # XXX: adjust the LM parameter somewhere!
-    lmbda = 0.1
-            
+    gamma = 0.9
+    eta_max = 0.9999
+    eta_treshold = 0.1
+    eta = eta_max
+
     for n in xrange(maxiter):
         if condition.check(Fx, x, dx):
             break
 
-        dx = -jacobian.solve(Fx)
-
-        if levenberg_marquardt:
-            # Adjust descent direction as per Levenberg-Marquardt
-            dx, lmbda = _subspace_levenberg_marquardt(-Fx, dx, jacobian, lmbda)
+        dx = -jacobian.solve(Fx, tol=eta)
 
         if line_search:
             # Line search for Wolfe conditions for an objective function
@@ -263,8 +276,21 @@ def nonlin_solve(F, x0, jacobian, iter=None, verbose=False,
         if callback:
             callback(x, Fx)
 
+        # Adjust forcing parameters for inexact methods
+        Fx_norm2 = norm(Fx)
+
+        eta_A = gamma * Fx_norm2**2 / Fx_norm**2
+        if gamma * eta**2 < eta_treshold:
+            eta = min(eta_max, eta_A)
+        else:
+            eta = min(eta_max, max(eta_A, gamma*eta**2))
+
+        Fx_norm = Fx_norm2
+
+        # Print status
         if verbose:
-            sys.stdout.write("%d:  |F(x)| = %g; step %g\n" % (n, norm(Fx), s))
+            sys.stdout.write("%d:  |F(x)| = %g; step %g; tol %g\n" % (
+                n, norm(Fx), s, eta))
             sys.stdout.flush()
     else:
         raise NoConvergence(_array_like(x, x0))
@@ -400,109 +426,6 @@ class TerminationCondition(object):
         return ((f_norm <= self.f_tol and f_norm/self.f_rtol <= self.f0_norm)
                 and (dx_norm <= self.x_tol and dx_norm/self.x_rtol <= x_norm))
 
-#------------------------------------------------------------------------------
-# Subspace trust-region algorithm
-#------------------------------------------------------------------------------
-
-def _subspace_levenberg_marquardt(residual, newton_step, jac, lmbda,
-                                  num_krylov=0):
-    r"""
-    Computes the solution to the Levenberg-Marquardt problem in a subspace.
-
-    The task is to find
-
-    .. math:: p^* = \argmin_p || ( J ; \lambda^{1/2} I ) p -  (r; 0) ||_2
-
-    where :math:`\lambda` is a parameter related to the trust region size,
-    and `J` the Jacobian and `r` the residual.
-
-    This routine determines a 'good enough' solution to this problem, from
-    some suitable subspace.
-
-    Parameters
-    ----------
-    residual : array
-        The residual
-    newton_step : array
-        The Newton step, satisfying ``J newton_step ~ residual``
-    jac : Jacobian
-        A Jacobian approximation
-    num_krylov : int, optional
-        Number of Krylov vectors to generate
-
-    Notes
-    -----
-    Here, we are interested mostly in large-scale problems in which
-    the optimization problem cannot be solved exactly. We may not even be
-    able to evaluate :math:`J^T v`.
-
-    Hence, we look for the solution in the Krylov subspace ::
-
-        [newton_step, residual, J residual, ..., J^num_krylov residual]
-
-    This space is augmented with the vectors ::
-
-        J^T residual
-
-    if the Jacobian supports the necessary operations.
-
-    """
-
-    # Subspace Ansatz: p = U q
-    U = []
-    JU = []
-
-    def append(u, Ju=None):
-        sc = norm(u)
-        U.append(u/sc)
-        if Ju is None:
-            Ju = jac.matvec(U[-1])
-            JU.append(Ju)
-        else:
-            JU.append(Ju/sc)
-
-    # Form the subspace
-    append(newton_step, residual)
-
-    if hasattr(jac, 'dot'):
-        for k in xrange(num_krylov):
-            append(JU[-1], jac.matvec(JU[-1]))
-
-    if hasattr(jac, 'dotH'):
-        append(jac.rmatvec(residual))
-
-    # Form the coefficient matrix
-    n = residual.size
-    p = len(U)
-
-    M = np.zeros((2*n, p), residual.dtype)
-    for j, (u, Ju) in enumerate(zip(U, JU)):
-        M[:n,j] = Ju
-        # M[n:,j] initialized later
-
-    # Form rhs
-    b = np.zeros((2*n,), residual.dtype)
-    b[:n] = residual
-
-    # Solving the optimization problem
-    def solution(tau):
-        for j, u in enumerate(U):
-            M[n:,j] = u
-            M[n:,j] *= np.sqrt(tau)
-        q, residues, rank, s = lstsq(M, b)
-
-        # Piece together the best solution
-        s = np.zeros_like(newton_step)
-        for u, q in zip(U, q):
-            s += q*u
-
-        return s
-
-    # XXX: Search for the correct LM parameter:
-    s = solution(lmbda)
-
-    # Return best solution, and the correct LM parameter
-    return s, lmbda
 
 #------------------------------------------------------------------------------
 # Generic Jacobian approximation
@@ -561,7 +484,7 @@ class Jacobian(object):
     def aspreconditioner(self):
         return InverseJacobian(self)
 
-    def solve(self, v):
+    def solve(self, v, tol):
         raise NotImplementedError
 
     def update(self, x, F):
@@ -598,10 +521,10 @@ def asjacobian(J):
     Convert given object to one suitable for use as a Jacobian.
     """
     spsolve = scipy.sparse.linalg.spsolve
-    if issubclass(J, Jacobian):
-        return J()
-    elif isinstance(J, Jacobian):
+    if isinstance(J, Jacobian):
         return J
+    elif inspect.isclass(J) and issubclass(J, Jacobian):
+        return J()
     elif isinstance(J, np.ndarray):
         if J.ndim > 2:
             raise ValueError('array must have rank <= 2')
@@ -636,7 +559,7 @@ def asjacobian(J):
         class Jac(Jacobian):
             def update(self, x, F):
                 self.x = x
-            def solve(self, v):
+            def solve(self, v, tol):
                 m = J(self.x)
                 if isinstance(m, np.ndarray):
                     return solve(m, v)
@@ -672,8 +595,8 @@ def asjacobian(J):
     elif isinstance(J, str):
         return dict(broyden1=BroydenFirst,
                     broyden2=BroydenSecond,
-                    anderson=Anderson
-                    vackar=Vackar
+                    anderson=Anderson,
+                    vackar=Vackar,
                     linearmixing=LinearMixing,
                     excitingmixing=ExcitingMixing,
                     krylov=KrylovJacobian)[J]()
@@ -682,7 +605,7 @@ def asjacobian(J):
 
 
 #------------------------------------------------------------------------------
-# Full Broyden / Quasi-Newton variants
+# Broyden
 #------------------------------------------------------------------------------
 
 class GenericBroyden(Jacobian):
@@ -770,13 +693,13 @@ class LowRankMatrix(object):
             return np.dot(self.collapsed.T.conj(), v)
         return LowRankMatrix._matvec(v, np.conj(self.alpha), self.ds, self.cs)
 
-    def solve(self, v):
+    def solve(self, v, tol):
         """Evaluate w = M^-1 v"""
         if self.collapsed is not None:
             return solve(self.collapsed, v)
         return LowRankMatrix._solve(v, self.alpha, self.cs, self.ds)
 
-    def rsolve(self, v):
+    def rsolve(self, v, tol):
         """Evaluate w = M^-H v"""
         if self.collapsed is not None:
             return solve(self.collapsed.T.conj(), v)
@@ -835,8 +758,8 @@ class LowRankMatrix(object):
         """
         Reduce the rank of the matrix by retaining some SVD components.
 
-        This algorithm is the \"Broyden Rank Reduction Inverse\"
-        method described in [vR]_.
+        This corresponds to the \"Broyden Rank Reduction Inverse\"
+        algorithm described in [vR]_.
 
         Note that the SVD decomposition can be done by solving only a
         problem whose size is the effective rank of this matrix, which
@@ -935,10 +858,13 @@ class BroydenFirst(GenericBroyden):
 
     """
 
-    def __init__(self, alpha=0.1, reduction_method='none', max_rank=np.inf):
+    def __init__(self, alpha=0.1, reduction_method='none', max_rank=None):
         GenericBroyden.__init__(self)
         self.alpha = alpha
         self.Gm = None
+        
+        if max_rank is None:
+            max_rank = np.inf
         self.max_rank = max_rank
 
         if isinstance(reduction_method, str):
@@ -967,7 +893,7 @@ class BroydenFirst(GenericBroyden):
     def todense(self):
         return inv(self.Gm)
 
-    def solve(self, f):
+    def solve(self, f, tol):
         return self.Gm.matvec(f)
 
     def matvec(self, f):
@@ -1077,7 +1003,7 @@ class Anderson(GenericBroyden):
         self.gamma = None
         self.w0 = w0
 
-    def solve(self, f):
+    def solve(self, f, tol):
         dx = -self.alpha*f
 
         n = len(self.dx)
@@ -1174,7 +1100,7 @@ class Vackar(GenericBroyden):
         GenericBroyden.setup(self, x, F, func)
         self.d = np.ones((self.shape[0],), dtype=self.dtype) / self.alpha
 
-    def solve(self, f):
+    def solve(self, f, tol):
         return -f / self.d
 
     def matvec(self, f):
@@ -1214,7 +1140,7 @@ class LinearMixing(GenericBroyden):
         GenericBroyden.__init__(self)
         self.alpha = alpha
 
-    def solve(self, f):
+    def solve(self, f, tol):
         return -f*self.alpha
 
     def matvec(self, f):
@@ -1265,16 +1191,16 @@ class ExcitingMixing(GenericBroyden):
         GenericBroyden.setup(self, x, F, func)
         self.beta = self.alpha * np.ones((self.shape[0],), dtype=self.dtype)
 
-    def solve(self, f):
+    def solve(self, f, tol):
         return -f*self.beta
 
     def matvec(self, f):
         return -f/self.beta
 
-    def solve(self, f):
+    def rsolve(self, f, tol):
         return -f*self.beta.conj()
 
-    def matvec(self, f):
+    def rmatvec(self, f):
         return -f/self.beta.conj()
 
     def todense(self):
@@ -1358,8 +1284,8 @@ class KrylovJacobian(Jacobian):
 
     """
 
-    def __init__(self, rdiff=None, method='lgmres', inner_tol=1e-6,
-                 inner_maxiter=20, inner_M=None, outer_k=6, **kw):
+    def __init__(self, rdiff=None, method='lgmres', inner_maxiter=20,
+                 inner_M=None, outer_k=6, **kw):
         self.preconditioner = inner_M
         self.rdiff = rdiff
         self.method = dict(
@@ -1370,8 +1296,7 @@ class KrylovJacobian(Jacobian):
             minres=scipy.sparse.linalg.minres,
             ).get(method, method)
 
-        self.method_kw = dict(tol=inner_tol, maxiter=inner_maxiter,
-                              M=self.preconditioner)
+        self.method_kw = dict(maxiter=inner_maxiter, M=self.preconditioner)
 
         if self.method is scipy.sparse.linalg.gmres:
             # Replace GMRES's outer iteration with Newton steps
@@ -1409,8 +1334,8 @@ class KrylovJacobian(Jacobian):
             raise ValueError('Function returned non-finite results')
         return r
 
-    def solve(self, rhs):
-        sol, info = self.method(self.op, rhs, **self.method_kw)
+    def solve(self, rhs, tol):
+        sol, info = self.method(self.op, rhs, tol=tol, **self.method_kw)
         return sol
 
     def update(self, x, f):
@@ -1469,12 +1394,11 @@ def _nonlin_wrapper(name, jac):
     wrapper = """
 def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
              f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
-             tol_norm=None, levenberg_marquardt=False, line_search=True,
-             callback=None, **kw):
+             tol_norm=None, line_search=True, callback=None, **kw):
     jac = %(jac)s(%(kwkw)s **kw)
     return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
                         f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search,
-                        levenberg_marquardt, callback)
+                        callback)
 """
 
     wrapper = wrapper % dict(name=name, kw=kw_str, jac=jac.__name__,
