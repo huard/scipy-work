@@ -935,10 +935,11 @@ class BroydenFirst(GenericBroyden):
 
     """
 
-    def __init__(self, alpha=0.1, reduction_method='none', max_rank=20):
+    def __init__(self, alpha=0.1, reduction_method='none', max_rank=np.inf):
         GenericBroyden.__init__(self)
         self.alpha = alpha
         self.Gm = None
+        self.max_rank = max_rank
 
         if isinstance(reduction_method, str):
             reduce_params = ()
