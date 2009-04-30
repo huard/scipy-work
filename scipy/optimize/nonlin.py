@@ -108,6 +108,7 @@ import numpy as np
 from scipy.linalg import norm, solve, inv, qr, svd, lstsq
 from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
+import scipy.sparse
 import scipy.lib.blas as blas
 import minpack2
 
@@ -200,9 +201,9 @@ def _set_doc(obj):
     if obj.__doc__:
         obj.__doc__ = obj.__doc__ % _doc_parts
 
-def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
+def nonlin_solve(F, x0, jacobian, iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None, line_search=True, levenberg_marquardt=True,
+                 tol_norm=None, line_search=True, levenberg_marquardt=False,
                  callback=None):
     """
     Find a root of a function, using given Jacobian approximation.
@@ -210,10 +211,8 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
     Parameters
     ----------
     %(params_basic)s
-    jacobian_factory : function(x0, f0, func)
-        Callable that constructs a Jacobian approximation. It is passed
-        the initial guess `x0`, the initial residual `f0` and a function
-        object `func` that evaluates the residual.
+    jacobian : Jacobian
+        A Jacobian approximation.
     %(params_extra)s
     """
 
@@ -226,7 +225,9 @@ def nonlin_solve(F, x0, jacobian_factory, iter=None, verbose=False,
 
     dx = np.inf
     Fx = func(x)
-    jacobian = jacobian_factory(x.copy(), Fx, func)
+
+    jacobian = asjacobian(jacobian)
+    jacobian.setup(x.copy(), Fx, func)
 
     if maxiter is None:
         if iter is not None:
@@ -298,7 +299,10 @@ def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
         raise ValueError('Invalid search direction')
 
     def func(s):
-        return norm(F(x + s*dx))
+        v = F(x + s*dx)
+        if np.isinf(v).any():
+            return np.inf
+        return norm(v)
 
     def grad(s, f0):
         ds = (abs(s) + x_norm) * eps
@@ -452,7 +456,7 @@ def _subspace_levenberg_marquardt(residual, newton_step, jac, lmbda,
         sc = norm(u)
         U.append(u/sc)
         if Ju is None:
-            Ju = jac.dot(U[-1])
+            Ju = jac.matvec(U[-1])
             JU.append(Ju)
         else:
             JU.append(Ju/sc)
@@ -462,10 +466,10 @@ def _subspace_levenberg_marquardt(residual, newton_step, jac, lmbda,
 
     if hasattr(jac, 'dot'):
         for k in xrange(num_krylov):
-            append(JU[-1], jac.dot(JU[-1]))
+            append(JU[-1], jac.matvec(JU[-1]))
 
     if hasattr(jac, 'dotH'):
-        append(jac.dotH(residual))
+        append(jac.rmatvec(residual))
 
     # Form the coefficient matrix
     n = residual.size
@@ -506,7 +510,7 @@ def _subspace_levenberg_marquardt(residual, newton_step, jac, lmbda,
 
 class Jacobian(object):
     """
-    Jacobian approximation.
+    Common interface for Jacobians or Jacobian approximations.
 
     The optional methods come useful when implementing trust region
     etc.  algorithms that often require evaluating transposes of the
@@ -515,31 +519,165 @@ class Jacobian(object):
     Methods
     -------
     solve
-        Evaluate inverse Jacobian--vector product
-    dot : optional
-        Evaluate Jacobian--vector product
-    solveH : optional
-        Evaluate Hermitian conjugated inverse Jacobian--vector product
-    dotH : optional
-        Evaluate Hermitian conjugated Jacobian--vector product
-    __array__ : optional
-        Form the dense Jacobian matrix. Used only for testing.
+        Returns J^-1 * v
+    update
+        Updates Jacobian to point `x` (where the function has residual `Fx`)
+
+    matvec : optional
+        Returns J * v
+    rmatvec : optional
+        Returns A^H * v
+    rsolve : optional
+        Returns A^-H * v
+    matmat : optional
+        Returns A * V, where V is a dense matrix with dimensions (N,K).
+    todense : optional
+        Form the dense Jacobian matrix. Necessary for dense trust region
+        algorithms, and useful for testing.
+        
+    Attributes
+    ----------
+    shape
+        Matrix dimensions (M, N)
+    dtype
+        Data type of the matrix.
+    func : callable, optional
+        Function the Jacobian corresponds to
+
     """
-    def __init__(self, x0, f0, func, **kw):
+
+    def __init__(self, **kw):
+        names = ["solve", "update", "matvec", "rmatvec", "rsolve",
+                 "matmat", "todense", "shape", "dtype"]
+        for name, value in kw.items():
+            if name not in names:
+                raise ValueError("Unknown keyword argument %s" % name)
+            if value is not None:
+                setattr(self, name, kw[name])
+
+        if hasattr(self, 'todense'):
+            self.__array__ = lambda: self.todense()
+
+    def aspreconditioner(self):
+        return InverseJacobian(self)
+
+    def solve(self, v):
         raise NotImplementedError
-    def solve(self, rhs):
-        """Evaluate inverse Jacobian--vector product"""
-        raise NotImplementedError
+
     def update(self, x, F):
-        """Update Jacobian"""
-        raise NotImplementedError
+        pass
+
+    def setup(self, x, F, func):
+        self.func = func
+        self.shape = (F.size, x.size)
+        self.dtype = F.dtype
+        if self.__class__.setup is Jacobian.setup:
+            # Call on the first point unless overridden
+            self.update(self, x, F)
+
+class InverseJacobian(object):
+    def __init__(self, jacobian):
+        self.jacobian = jacobian
+        self.matvec = jacobian.solve
+        self.update = jacobian.update
+        if hasattr(jacobian, 'setup'):
+            self.setup = jacobian.setup
+        if hasattr(jacobian, 'rsolve'):
+            self.rmatvec = jacobian.rsolve
+
+    @property
+    def shape(self):
+        return self.jacobian.shape
+
+    @property
+    def dtype(self):
+        return self.jacobian.dtype
+
+def asjacobian(J):
+    """
+    Convert given object to one suitable for use as a Jacobian.
+    """
+    spsolve = scipy.sparse.linalg.spsolve
+    if isinstance(J, Jacobian):
+        return J
+    elif isinstance(J, np.ndarray):
+        if J.ndim > 2:
+            raise ValueError('array must have rank <= 2')
+        J = np.atleast_2d(np.asarray(J))
+        if J.shape[0] != J.shape[1]:
+            raise ValueError('array must be square')
+
+        return Jacobian(matvec=lambda v: dot(J, v),
+                        rmatvec=lambda v: dot(J.conj().T, v),
+                        solve=lambda v: solve(J, v),
+                        rsolve=lambda v: solve(J.conj().T, v),
+                        dtype=J.dtype, shape=J.shape)
+    elif scipy.sparse.isspmatrix(J):
+        if J.shape[0] != J.shape[1]:
+            raise ValueError('matrix must be square')
+        return Jacobian(matvec=lambda v: J*v,
+                        rmatvec=lambda v: J.conj().T * v,
+                        solve=lambda v: spsolve(J, v),
+                        rsolve=lambda v: spsolve(J.conj().T, v),
+                        dtype=J.dtype, shape=J.shape)
+    elif hasattr(J, 'shape') and hasattr(J, 'dtype') and hasattr(J, 'solve'):
+        return Jacobian(matvec=getattr(J, 'matvec'),
+                        rmatvec=getattr(J, 'rmatvec'),
+                        solve=J.solve,
+                        rsolve=getattr(J, 'rsolve'),
+                        update=getattr(J, 'update'),
+                        setup=getattr(J, 'setup'),
+                        dtype=J.dtype,
+                        shape=J.shape)
+    elif callable(J):
+        # Assume it's a function J(x) that returns the Jacobian
+        class Jac(Jacobian):
+            def update(self, x, F):
+                self.x = x
+            def solve(self, v):
+                m = J(self.x)
+                if isinstance(m, np.ndarray):
+                    return solve(m, v)
+                elif scipy.sparse.isspmatrix(m):
+                    return spsolve(m, v)
+                else:
+                    raise ValueError("Unknown matrix type")
+            def matvec(self, v):
+                m = J(self.x)
+                if isinstance(m, np.ndarray):
+                    return dot(m, v)
+                elif scipy.sparse.isspmatrix(m):
+                    return m*v
+                else:
+                    raise ValueError("Unknown matrix type")
+            def rsolve(self, v):
+                m = J(self.x)
+                if isinstance(m, np.ndarray):
+                    return solve(m.conj().T, v)
+                elif scipy.sparse.isspmatrix(m):
+                    return spsolve(m.conj().T, v)
+                else:
+                    raise ValueError("Unknown matrix type")
+            def rmatvec(self, v):
+                m = J(self.x)
+                if isinstance(m, np.ndarray):
+                    return dot(m.conj().T, v)
+                elif scipy.sparse.isspmatrix(m):
+                    return m.conj().T * v
+                else:
+                    raise ValueError("Unknown matrix type")
+        return Jac()
+    else:
+        raise TypeError('Cannot convert object to a Jacobian')
+
 
 #------------------------------------------------------------------------------
 # Full Broyden / Quasi-Newton variants
 #------------------------------------------------------------------------------
 
 class GenericBroyden(Jacobian):
-    def __init__(self, x0, f0, func):
+    def setup(self, x0, f0, func):
+        Jacobian.setup(self, x0, f0, func)
         self.last_f = f0
         self.last_x = x0
 
@@ -573,7 +711,7 @@ class LowRankMatrix(object):
         self.collapsed = None
 
     @staticmethod
-    def _dot(v, alpha, cs, ds):
+    def _matvec(v, alpha, cs, ds):
         axpy, scal, dotc = blas.get_blas_funcs(['axpy', 'scal', 'dotc'],
                                                cs[:1] + [v])
         w = alpha * v
@@ -610,17 +748,17 @@ class LowRankMatrix(object):
 
         return w
 
-    def dot(self, v):
+    def matvec(self, v):
         """Evaluate w = M v"""
         if self.collapsed is not None:
             return np.dot(self.collapsed, v)
-        return LowRankMatrix._dot(v, self.alpha, self.cs, self.ds)
+        return LowRankMatrix._matvec(v, self.alpha, self.cs, self.ds)
 
-    def dotH(self, v):
+    def rmatvec(self, v):
         """Evaluate w = M^H v"""
         if self.collapsed is not None:
             return np.dot(self.collapsed.T.conj(), v)
-        return LowRankMatrix._dot(v, np.conj(self.alpha), self.ds, self.cs)
+        return LowRankMatrix._matvec(v, np.conj(self.alpha), self.ds, self.cs)
 
     def solve(self, v):
         """Evaluate w = M^-1 v"""
@@ -628,7 +766,7 @@ class LowRankMatrix(object):
             return solve(self.collapsed, v)
         return LowRankMatrix._solve(v, self.alpha, self.cs, self.ds)
 
-    def solveH(self, v):
+    def rsolve(self, v):
         """Evaluate w = M^-H v"""
         if self.collapsed is not None:
             return solve(self.collapsed.T.conj(), v)
@@ -787,10 +925,10 @@ class BroydenFirst(GenericBroyden):
 
     """
 
-    def __init__(self, x0, f0, func, alpha=0.1,
-                 reduction_method='none', max_rank=20):
-        GenericBroyden.__init__(self, x0, f0, func)
-        self.Gm = LowRankMatrix(-alpha, f0.size, f0.dtype)
+    def __init__(self, alpha=0.1, reduction_method='none', max_rank=20):
+        GenericBroyden.__init__(self)
+        self.alpha = alpha
+        self.Gm = None
 
         if isinstance(reduction_method, str):
             reduce_params = ()
@@ -811,26 +949,30 @@ class BroydenFirst(GenericBroyden):
             raise ValueError("Unknown rank reduction method '%s'" %
                              reduction_method)
 
-    def __array__(self):
+    def setup(self, x, F, func):
+        GenericBroyden.setup(self, x, F, func)
+        self.Gm = LowRankMatrix(-self.alpha, self.shape[0], self.dtype)
+
+    def todense(self):
         return inv(self.Gm)
 
     def solve(self, f):
-        return self.Gm.dot(f)
+        return self.Gm.matvec(f)
 
-    def dot(self, f):
+    def matvec(self, f):
         return self.Gm.solve(f)
 
-    def solveH(self, f):
-        return self.Gm.dotH(f)
+    def rsolve(self, f):
+        return self.Gm.rmatvec(f)
 
-    def dotH(self, f):
-        return self.Gm.solveH(f)
+    def rmatvec(self, f):
+        return self.Gm.rsolve(f)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self._reduce() # reduce first to preserve secant condition
 
-        s = self.Gm.dotH(dx)
-        y = self.Gm.dot(df)
+        s = self.Gm.rmatvec(dx)
+        y = self.Gm.matvec(df)
         c = (dx - y) / vdot(dx, y)
         d = s
         self.Gm.append(c, d)
@@ -857,7 +999,7 @@ class BroydenSecond(BroydenFirst):
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self._reduce() # reduce first to preserve secant condition
 
-        c = (dx - self.Gm.dot(df)) / df_norm
+        c = (dx - self.Gm.matvec(df)) / df_norm
         d = df / df_norm
         self.Gm.append(c, d)
         #self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
@@ -915,8 +1057,8 @@ class Anderson(GenericBroyden):
     #    J v ~ -v/alpha + (dX/alpha + dF) (dF^H dX - alpha W)^-1 dF^H v
     #
 
-    def __init__(self, x0, f0, func, alpha=0.1, w0=0.01, M=5):
-        GenericBroyden.__init__(self, x0, f0, func)
+    def __init__(self, alpha=0.1, w0=0.01, M=5):
+        GenericBroyden.__init__(self)
         self.alpha = alpha
         self.M = M
         self.dx = []
@@ -940,7 +1082,7 @@ class Anderson(GenericBroyden):
             dx += gamma[m]*(self.dx[m] + self.alpha*self.df[m])
         return dx
 
-    def dot(self, f):
+    def matvec(self, f):
         dx = -f/self.alpha
 
         n = len(self.dx)
@@ -1013,21 +1155,28 @@ class Vackar(GenericBroyden):
     %(params_extra)s
     """
 
-    def __init__(self, x0, f0, func, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0, func)
-        self.d = np.ones_like(x0)/alpha
+    def __init__(self, alpha=0.1):
+        GenericBroyden.__init__(self)
+        self.alpha = alpha
+
+    def setup(self, x, F, func):
+        GenericBroyden.setup(self, x, F, func)
+        self.d = np.ones((self.shape[0],), dtype=self.dtype) / self.alpha
 
     def solve(self, f):
         return -f / self.d
 
-    def dot(self, f):
+    def matvec(self, f):
         return -f * self.d
 
-    def solveH(self, f):
+    def rsolve(self, f):
         return -f / self.d.conj()
 
-    def dotH(self, f):
+    def rmatvec(self, f):
         return -f * self.d.conj()
+
+    def todense(self):
+        return np.diag(-self.d)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self.d -= (df + self.d*dx)*dx/dx_norm**2
@@ -1050,21 +1199,24 @@ class LinearMixing(GenericBroyden):
     %(params_extra)s
     """
 
-    def __init__(self, x0, f0, func, alpha=0.1):
-        GenericBroyden.__init__(self, x0, f0, func)
+    def __init__(self, alpha=0.1):
+        GenericBroyden.__init__(self)
         self.alpha = alpha
 
     def solve(self, f):
         return -f*self.alpha
 
-    def dot(self, f):
+    def matvec(self, f):
         return -f/self.alpha
 
-    def solveH(self, f):
+    def rsolve(self, f):
         return -f*np.conj(self.alpha)
 
-    def dotH(self, f):
+    def rmatvec(self, f):
         return -f/np.conj(self.alpha)
+
+    def todense(self):
+        return np.diag(-np.ones(self.shape[0])/self.alpha)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         pass
@@ -1092,23 +1244,30 @@ class ExcitingMixing(GenericBroyden):
     %(params_extra)s
     """
 
-    def __init__(self, x0, f0, func, alpha=0.1, alphamax=1.0):
-        GenericBroyden.__init__(self, x0, f0, func)
+    def __init__(self, alpha=0.1, alphamax=1.0):
+        GenericBroyden.__init__(self)
         self.alpha = alpha
         self.alphamax = alphamax
-        self.beta = alpha*np.ones_like(x0)
+        self.beta = None
+
+    def setup(self, x, F, func):
+        GenericBroyden.setup(self, x, F, func)
+        self.beta = self.alpha * np.ones((self.shape[0],), dtype=self.dtype)
 
     def solve(self, f):
         return -f*self.beta
 
-    def dot(self, f):
+    def matvec(self, f):
         return -f/self.beta
 
     def solve(self, f):
         return -f*self.beta.conj()
 
-    def dot(self, f):
+    def matvec(self, f):
         return -f/self.beta.conj()
+
+    def todense(self):
+        return np.diag(-1/self.beta)
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         incr = f*self.last_f > 0
@@ -1138,7 +1297,14 @@ class KrylovJacobian(Jacobian):
         the iterative solvers in `scipy.sparse.linalg`.
 
         The default is `scipy.sparse.linalg.lgmres`.
-    inner_tol, inner_maxiter, inner_M, ...
+    inner_M : LinearOperator or InverseJacobian
+        Preconditioner for the inner Krylov iteration.
+        Note that you can use also inverse Jacobians as (adaptive)
+        preconditioners. For example,
+
+        >>> jac = Broyden1()
+        >>> kjac = KrylovJacobian(inner_M=jac.inverse).
+    inner_tol, inner_maxiter, ...
         Parameters to pass on to the \"inner\" Krylov solver.
         See `scipy.sparse.linalg.gmres` for details.
     outer_k : int, optional
@@ -1181,18 +1347,9 @@ class KrylovJacobian(Jacobian):
 
     """
 
-    def __init__(self, x0, f0, func, rdiff=None,
-                 method='lgmres',
-                 inner_tol=1e-6, inner_maxiter=20, inner_M=None,
-                 outer_k=6, **kw):
-
-        self.x0 = x0
-        self.f0 = f0
-        self.func = func
-
-        if rdiff is None:
-            rdiff = np.finfo(x0.dtype).eps ** (1./2)
-
+    def __init__(self, rdiff=None, method='lgmres', inner_tol=1e-6,
+                 inner_maxiter=20, inner_M=None, outer_k=6, **kw):
+        self.preconditioner = inner_M
         self.rdiff = rdiff
         self.method = dict(
             bicgstab=scipy.sparse.linalg.bicgstab,
@@ -1203,7 +1360,7 @@ class KrylovJacobian(Jacobian):
             ).get(method, method)
 
         self.method_kw = dict(tol=inner_tol, maxiter=inner_maxiter,
-                              M=inner_M)
+                              M=self.preconditioner)
 
         if self.method is scipy.sparse.linalg.gmres:
             # Replace GMRES's outer iteration with Newton steps
@@ -1226,16 +1383,12 @@ class KrylovJacobian(Jacobian):
                 raise ValueError("Unknown parameter %s" % key)
             self.method_kw[key[6:]] = value
 
-        self.op = scipy.sparse.linalg.LinearOperator(
-            shape=(f0.size, x0.size), matvec=self.dot, dtype=self.f0.dtype)
-        self._update_diff_step()
-
     def _update_diff_step(self):
         mx = abs(self.x0).max()
         mf = abs(self.f0).max()
         self.omega = self.rdiff * max(1, mx) / max(1, mf)
 
-    def dot(self, v):
+    def matvec(self, v):
         nv = norm(v)
         if nv == 0:
             return 0*v
@@ -1253,6 +1406,28 @@ class KrylovJacobian(Jacobian):
         self.x0 = x
         self.f0 = f
         self._update_diff_step()
+
+        # Update also the preconditioner, if possible
+        if self.preconditioner is not None:
+            if hasattr(self.preconditioner, 'update'):
+                self.preconditioner.update(x, f)
+
+    def setup(self, x, f, func):
+        Jacobian.setup(self, x, f, func)
+        self.x0 = x
+        self.f0 = f
+        self.op = scipy.sparse.linalg.aslinearoperator(self)
+
+        if self.rdiff is None:
+            self.rdiff = np.finfo(x.dtype).eps ** (1./2)
+
+        self._update_diff_step()
+
+
+        # Setup also the preconditioner, if possible
+        if self.preconditioner is not None:
+            if hasattr(self.preconditioner, 'setup'):
+                self.preconditioner.setup(x, f, func)
 
 
 #------------------------------------------------------------------------------
@@ -1276,19 +1451,21 @@ def _nonlin_wrapper(name, jac):
         kw_str = ", " + kw_str
     kwkw_str = ", ".join(["%s=%s" % (k, k) for k, v in kwargs])
     if kwkw_str:
-        kwkw_str = ", " + kwkw_str
+        kwkw_str = kwkw_str + ", "
 
     # Construct the wrapper function so that it's keyword arguments
     # are visible in pydoc.help etc.
     wrapper = """
 def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
              f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
-             tol_norm=None, levenberg_marquardt=True, line_search=True, **kw):
-    jac = lambda x, f, func: %(jac)s(x, f, func %(kwkw)s, **kw)
+             tol_norm=None, levenberg_marquardt=False, line_search=True,
+             callback=None, **kw):
+    jac = %(jac)s(%(kwkw)s **kw)
     return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
                         f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search,
-                        levenberg_marquardt)
+                        levenberg_marquardt, callback)
 """
+
     wrapper = wrapper % dict(name=name, kw=kw_str, jac=jac.__name__,
                              kwkw=kwkw_str)
     ns = {}

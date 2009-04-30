@@ -85,7 +85,8 @@ class TestSecant(TestCase):
         Check that the given Jacobian approximation satisfies secant
         conditions for last `npoints` points.
         """
-        jac = jac_cls(self.xs[0], self.fs[0], None, **kw)
+        jac = jac_cls(**kw)
+        jac.setup(self.xs[0], self.fs[0], None)
         for j, (x, f) in enumerate(zip(self.xs[1:], self.fs[1:])):
             jac.update(x, f)
 
@@ -108,7 +109,8 @@ class TestSecant(TestCase):
 
     def test_broyden1_sherman_morrison(self):
         # Check that BroydenFirst is as expected for the 1st iteration
-        jac = nonlin.BroydenFirst(self.xs[0], self.fs[0], None, alpha=0.1)
+        jac = nonlin.BroydenFirst(alpha=0.1)
+        jac.setup(self.xs[0], self.fs[0], None)
         jac.update(self.xs[1], self.fs[1])
 
         df = self.fs[1] - self.fs[0]
@@ -151,7 +153,8 @@ class TestJacobianDotSolve(object):
 
         # initialize
         x0 = np.random.rand(N)
-        jac = jac_cls(x0, self._func(x0), self._func, **kw)
+        jac = jac_cls(**kw)
+        jac.setup(x0, self._func(x0), self._func)
 
         # check consistency
         for k in xrange(2*N):
