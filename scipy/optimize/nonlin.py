@@ -253,7 +253,7 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
     gamma = 0.9
     eta_max = 0.9999
     eta_treshold = 0.1
-    eta = eta_max
+    eta = 1e-3
 
     for n in xrange(maxiter):
         if condition.check(Fx, x, dx):
