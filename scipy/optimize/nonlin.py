@@ -228,6 +228,13 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
     jacobian : Jacobian
         A Jacobian approximation.
     %(params_extra)s
+
+    References
+    ----------
+    .. [KIM] C. T. Kelley, \"Iterative Methods for Linear and Nonlinear
+       Equations\". Society for Industrial and Applied Mathematics. (1995)
+       http://www.siam.org/books/kelley/
+
     """
 
     condition = TerminationCondition(f_tol=f_tol, f_rtol=f_rtol,
@@ -250,6 +257,7 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
         else:
             maxiter = 100*(x.size+1)
 
+    # Solver tolerance selection
     gamma = 0.9
     eta_max = 0.9999
     eta_treshold = 0.1
@@ -259,7 +267,14 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
         if condition.check(Fx, x, dx):
             break
 
-        dx = -jacobian.solve(Fx, tol=eta)
+        # The tolerance, as computed for scipy.sparse.linalg.* routines
+        tol = min(eta, eta*Fx_norm)
+        dx = -jacobian.solve(Fx, tol=tol)
+
+        if norm(dx) == 0:
+            raise ValueError("Jacobian inversion yielded zero vector. "
+                             "This indicates a bug in the Jacobian "
+                             "approximation.")
 
         if line_search:
             # Line search for Wolfe conditions for an objective function
@@ -271,21 +286,20 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
 
         x += step
         Fx = func(x)
+        Fx_norm_new = norm(Fx)
         jacobian.update(x.copy(), Fx)
 
         if callback:
             callback(x, Fx)
 
         # Adjust forcing parameters for inexact methods
-        Fx_norm2 = norm(Fx)
-
-        eta_A = gamma * Fx_norm2**2 / Fx_norm**2
+        eta_A = gamma * Fx_norm_new**2 / Fx_norm**2
         if gamma * eta**2 < eta_treshold:
             eta = min(eta_max, eta_A)
         else:
             eta = min(eta_max, max(eta_A, gamma*eta**2))
 
-        Fx_norm = Fx_norm2
+        Fx_norm = Fx_norm_new
 
         # Print status
         if verbose:
@@ -484,7 +498,7 @@ class Jacobian(object):
     def aspreconditioner(self):
         return InverseJacobian(self)
 
-    def solve(self, v, tol):
+    def solve(self, v, tol=0):
         raise NotImplementedError
 
     def update(self, x, F):
@@ -559,7 +573,7 @@ def asjacobian(J):
         class Jac(Jacobian):
             def update(self, x, F):
                 self.x = x
-            def solve(self, v, tol):
+            def solve(self, v, tol=0):
                 m = J(self.x)
                 if isinstance(m, np.ndarray):
                     return solve(m, v)
@@ -693,7 +707,7 @@ class LowRankMatrix(object):
             return np.dot(self.collapsed.T.conj(), v)
         return LowRankMatrix._matvec(v, np.conj(self.alpha), self.ds, self.cs)
 
-    def solve(self, v, tol):
+    def solve(self, v, tol=0):
         """Evaluate w = M^-1 v"""
         if self.collapsed is not None:
             return solve(self.collapsed, v)
@@ -893,7 +907,7 @@ class BroydenFirst(GenericBroyden):
     def todense(self):
         return inv(self.Gm)
 
-    def solve(self, f, tol):
+    def solve(self, f, tol=0):
         return self.Gm.matvec(f)
 
     def matvec(self, f):
@@ -1003,7 +1017,7 @@ class Anderson(GenericBroyden):
         self.gamma = None
         self.w0 = w0
 
-    def solve(self, f, tol):
+    def solve(self, f, tol=0):
         dx = -self.alpha*f
 
         n = len(self.dx)
@@ -1100,7 +1114,7 @@ class Vackar(GenericBroyden):
         GenericBroyden.setup(self, x, F, func)
         self.d = np.ones((self.shape[0],), dtype=self.dtype) / self.alpha
 
-    def solve(self, f, tol):
+    def solve(self, f, tol=0):
         return -f / self.d
 
     def matvec(self, f):
@@ -1140,7 +1154,7 @@ class LinearMixing(GenericBroyden):
         GenericBroyden.__init__(self)
         self.alpha = alpha
 
-    def solve(self, f, tol):
+    def solve(self, f, tol=0):
         return -f*self.alpha
 
     def matvec(self, f):
@@ -1191,7 +1205,7 @@ class ExcitingMixing(GenericBroyden):
         GenericBroyden.setup(self, x, F, func)
         self.beta = self.alpha * np.ones((self.shape[0],), dtype=self.dtype)
 
-    def solve(self, f, tol):
+    def solve(self, f, tol=0):
         return -f*self.beta
 
     def matvec(self, f):
@@ -1334,7 +1348,7 @@ class KrylovJacobian(Jacobian):
             raise ValueError('Function returned non-finite results')
         return r
 
-    def solve(self, rhs, tol):
+    def solve(self, rhs, tol=0):
         sol, info = self.method(self.op, rhs, tol=tol, **self.method_kw)
         return sol
 
