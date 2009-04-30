@@ -218,7 +218,7 @@ def _set_doc(obj):
 
 def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None, line_search=True, callback=None):
+                 tol_norm=None, line_search='wolfe', callback=None):
     """
     Find a root of a function, using given Jacobian approximation.
 
@@ -257,6 +257,9 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
         else:
             maxiter = 100*(x.size+1)
 
+    if line_search not in (None, 'armijo', 'wolfe'):
+        raise ValueError("Invalid line search")
+
     # Solver tolerance selection
     gamma = 0.9
     eta_max = 0.9999
@@ -276,17 +279,19 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
                              "This indicates a bug in the Jacobian "
                              "approximation.")
 
-        if line_search:
+        if line_search == 'wolfe':
             # Line search for Wolfe conditions for an objective function
-            s = _line_search(func, x, dx)
-            step = dx*s
-        else:
-            step = dx
-            s = 1.0
+            s = line_search_wolfe(func, x, dx)
+            x += s*dx
+            Fx = func(x)
+            Fx_norm_new = norm(Fx)
+        elif line_search == 'armijo':
+            s, x, Fx, Fx_norm_new = line_search_armijo(func, x, dx, Fx, Fx_norm)
+        elif line_search is None:
+            x += dx
+            Fx = func(x)
+            Fx_norm_new = norm(Fx)
 
-        x += step
-        Fx = func(x)
-        Fx_norm_new = norm(Fx)
         jacobian.update(x.copy(), Fx)
 
         if callback:
@@ -313,7 +318,65 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
 
 _set_doc(nonlin_solve)
 
-def _line_search(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
+
+def line_search_armijo(F, x, dx, Fx=None, Fx_norm=None, alpha=1e-4):
+    """
+    Perform a line search at `x` to direction `dx` looking for a sufficient
+    decrease in the norm of ``F(x + s dx)``.
+
+    The resulting step length will aim toward satisfying the Armijo condition
+
+        || F(x + s dx) ||_2 < (1 - alpha s) || F(x + s dx) ||_2
+
+    Parameters
+    ----------
+    F
+        The function
+    x
+        Position
+    dx
+        Search direction
+    Fx : optional
+        F(x)
+    alpha : float, optional
+        Armijo parameter
+
+    Returns
+    -------
+    s
+        Selected step length
+    x_new
+        x + s dx
+    Fx_new
+        F(x + s dx)
+    Fx_norm_new
+        Norm of Fx_new
+
+    """
+
+    if Fx is None:
+        Fx = F(x)
+    if Fx_norm is None:
+        Fx_norm = norm(Fx)
+
+    s = 1.0
+    for k in xrange(6):
+        x_new = x + s * dx
+        Fx_new = F(x_new)
+        Fx_norm_new = norm(Fx_new)
+
+        if Fx_norm_new < (1 - alpha * s) * Fx_norm:
+            break
+
+        s /= 2
+    else:
+        # Give up; it's probably not a descent direction.
+        # Could fail here, but just return the shortest step
+        pass
+
+    return s, x_new, Fx_new, Fx_norm_new
+
+def line_search_wolfe(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     """
     Perform a line search at `x` to direction `dx` looking for a sufficient
     decrease in the norm of ``F(x + s dx)``.
@@ -1408,7 +1471,7 @@ def _nonlin_wrapper(name, jac):
     wrapper = """
 def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
              f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
-             tol_norm=None, line_search=True, callback=None, **kw):
+             tol_norm=None, line_search='wolfe', callback=None, **kw):
     jac = %(jac)s(%(kwkw)s **kw)
     return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
                         f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search,
