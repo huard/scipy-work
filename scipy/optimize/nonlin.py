@@ -598,7 +598,9 @@ def asjacobian(J):
     Convert given object to one suitable for use as a Jacobian.
     """
     spsolve = scipy.sparse.linalg.spsolve
-    if isinstance(J, Jacobian):
+    if issubclass(J, Jacobian):
+        return J()
+    elif isinstance(J, Jacobian):
         return J
     elif isinstance(J, np.ndarray):
         if J.ndim > 2:
@@ -667,6 +669,14 @@ def asjacobian(J):
                 else:
                     raise ValueError("Unknown matrix type")
         return Jac()
+    elif isinstance(J, str):
+        return dict(broyden1=BroydenFirst,
+                    broyden2=BroydenSecond,
+                    anderson=Anderson
+                    vackar=Vackar
+                    linearmixing=LinearMixing,
+                    excitingmixing=ExcitingMixing,
+                    krylov=KrylovJacobian)[J]()
     else:
         raise TypeError('Cannot convert object to a Jacobian')
 
