@@ -218,7 +218,7 @@ def _set_doc(obj):
 
 def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None, line_search='armijo', callback=None):
+                 tol_norm=None, line_search='wolfe', callback=None):
     """
     Find a root of a function, using given Jacobian approximation.
 
@@ -421,7 +421,7 @@ def line_search_armijo(F, x, dx, Fx=None, Fx_norm=None, alpha=1e-4):
     if Fx is None:
         Fx = F(x)
     if Fx_norm is None:
-        Fx_norm = norm(Fx)
+        Fx_norm = _safe_norm(Fx)
 
     x0 = x
     Fx0 = Fx
@@ -431,7 +431,7 @@ def line_search_armijo(F, x, dx, Fx=None, Fx_norm=None, alpha=1e-4):
     for k in xrange(6):
         x_new = x + s * dx
         Fx_new = F(x_new)
-        Fx_norm_new = norm(Fx_new)
+        Fx_norm_new = _safe_norm(Fx_new)
 
         if Fx_norm_new < (1 - alpha * s) * Fx_norm:
             break
@@ -714,6 +714,11 @@ class GenericBroyden(Jacobian):
         self.last_f = f0
         self.last_x = x0
 
+        if hasattr(self, 'alpha') and self.alpha is None:
+            # autoscale the initial Jacobian parameter
+            self.alpha = 0.5*max(norm(x0), 1) / norm(f0)
+            print "autoscale", self.alpha
+
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         raise NotImplementedError
 
@@ -958,7 +963,7 @@ class BroydenFirst(GenericBroyden):
 
     """
 
-    def __init__(self, alpha=0.1, reduction_method='none', max_rank=None):
+    def __init__(self, alpha=None, reduction_method='none', max_rank=None):
         GenericBroyden.__init__(self)
         self.alpha = alpha
         self.Gm = None
@@ -1094,7 +1099,7 @@ class Anderson(GenericBroyden):
     #    J v ~ -v/alpha + (dX/alpha + dF) (dF^H dX - alpha W)^-1 dF^H v
     #
 
-    def __init__(self, alpha=0.1, w0=0.01, M=5):
+    def __init__(self, alpha=None, w0=0.01, M=5):
         GenericBroyden.__init__(self)
         self.alpha = alpha
         self.M = M
@@ -1192,7 +1197,7 @@ class Vackar(GenericBroyden):
     %(params_extra)s
     """
 
-    def __init__(self, alpha=0.1):
+    def __init__(self, alpha=None):
         GenericBroyden.__init__(self)
         self.alpha = alpha
 
@@ -1236,7 +1241,7 @@ class LinearMixing(GenericBroyden):
     %(params_extra)s
     """
 
-    def __init__(self, alpha=0.1):
+    def __init__(self, alpha=None):
         GenericBroyden.__init__(self)
         self.alpha = alpha
 
@@ -1281,7 +1286,7 @@ class ExcitingMixing(GenericBroyden):
     %(params_extra)s
     """
 
-    def __init__(self, alpha=0.1, alphamax=1.0):
+    def __init__(self, alpha=None, alphamax=1.0):
         GenericBroyden.__init__(self)
         self.alpha = alpha
         self.alphamax = alphamax
@@ -1494,7 +1499,7 @@ def _nonlin_wrapper(name, jac):
     wrapper = """
 def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
              f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
-             tol_norm=None, line_search='armijo', callback=None, **kw):
+             tol_norm=None, line_search='wolfe', callback=None, **kw):
     jac = %(jac)s(%(kwkw)s **kw)
     return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
                         f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search,
