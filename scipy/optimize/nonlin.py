@@ -320,6 +320,67 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
 _set_doc(nonlin_solve)
 
 
+class TerminationCondition(object):
+    """
+    Termination condition for an iteration. It is terminated if
+
+    - |F| < f_rtol*|F_0|, AND
+    - |F| < f_tol
+
+    AND
+
+    - |dx| < x_rtol*|x|, AND
+    - |dx| < x_tol
+
+    """
+    def __init__(self, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
+                 iter=None, norm=maxnorm):
+
+        if f_tol is None:
+            f_tol = np.finfo(np.float_).eps ** (1./3)
+        if f_rtol is None:
+            f_rtol = np.inf
+        if x_tol is None:
+            x_tol = np.inf
+        if x_rtol is None:
+            x_rtol = np.inf
+        
+        self.x_tol = x_tol
+        self.x_rtol = x_rtol
+        self.f_tol = f_tol
+        self.f_rtol = f_rtol
+
+        self.norm = maxnorm
+        self.iter = iter
+
+        self.f0_norm = None
+        self.iteration = 0
+        
+    def check(self, f, x, dx):
+        self.iteration += 1
+        f_norm = self.norm(f)
+        x_norm = self.norm(x)
+        dx_norm = self.norm(dx)
+
+        if self.f0_norm is None:
+            self.f0_norm = f_norm
+            
+        if f_norm == 0:
+            return True
+
+        if self.iter is not None:
+            # backwards compatibility with Scipy 0.6.0
+            return self.iteration > self.iter
+
+        # NB: condition must succeed for rtol=inf even if norm == 0
+        return ((f_norm <= self.f_tol and f_norm/self.f_rtol <= self.f0_norm)
+                and (dx_norm <= self.x_tol and dx_norm/self.x_rtol <= x_norm))
+
+
+#------------------------------------------------------------------------------
+# Line searches
+#------------------------------------------------------------------------------
+
 def line_search_armijo(F, x, dx, Fx=None, Fx_norm=None, alpha=1e-4):
     """
     Perform a line search at `x` to direction `dx` looking for a sufficient
@@ -464,62 +525,6 @@ def line_search_wolfe(F, x0, dx, Fx=None, Fx_norm=None,
 
     stp /= dx_norm
     return stp, x, Fx, Fx_norm
-
-class TerminationCondition(object):
-    """
-    Termination condition for an iteration. It is terminated if
-
-    - |F| < f_rtol*|F_0|, AND
-    - |F| < f_tol
-
-    AND
-
-    - |dx| < x_rtol*|x|, AND
-    - |dx| < x_tol
-
-    """
-    def __init__(self, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 iter=None, norm=maxnorm):
-
-        if f_tol is None:
-            f_tol = np.finfo(np.float_).eps ** (1./3)
-        if f_rtol is None:
-            f_rtol = np.inf
-        if x_tol is None:
-            x_tol = np.inf
-        if x_rtol is None:
-            x_rtol = np.inf
-        
-        self.x_tol = x_tol
-        self.x_rtol = x_rtol
-        self.f_tol = f_tol
-        self.f_rtol = f_rtol
-
-        self.norm = maxnorm
-        self.iter = iter
-
-        self.f0_norm = None
-        self.iteration = 0
-        
-    def check(self, f, x, dx):
-        self.iteration += 1
-        f_norm = self.norm(f)
-        x_norm = self.norm(x)
-        dx_norm = self.norm(dx)
-
-        if self.f0_norm is None:
-            self.f0_norm = f_norm
-            
-        if f_norm == 0:
-            return True
-
-        if self.iter is not None:
-            # backwards compatibility with Scipy 0.6.0
-            return self.iteration > self.iter
-
-        # NB: condition must succeed for rtol=inf even if norm == 0
-        return ((f_norm <= self.f_tol and f_norm/self.f_rtol <= self.f0_norm)
-                and (dx_norm <= self.x_tol and dx_norm/self.x_rtol <= x_norm))
 
 
 #------------------------------------------------------------------------------
