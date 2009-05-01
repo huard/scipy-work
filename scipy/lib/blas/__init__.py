@@ -50,9 +50,9 @@ def get_blas_funcs(names,arrays=(),debug=0):
             name = 'dot'
         func_name = required_prefix + name
         if name == 'nrm2' and dtypechar == 'D':
-            name = 'dznrm2'
+            func_name = 'dznrm2'
         elif name == 'nrm2' and dtypechar == 'F':
-            name = 'scnrm2'
+            func_name = 'scnrm2'
         func = getattr(m1,func_name,None)
         if func is None:
             func = getattr(m2,func_name)
