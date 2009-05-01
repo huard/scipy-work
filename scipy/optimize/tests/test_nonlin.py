@@ -72,11 +72,11 @@ class TestNonlin(object):
 class TestSecant(TestCase):
     """Check that some Jacobian approximations satisfy the secant condition"""
 
-    xs = [np.array([1,2,3,4,5]),
-          np.array([2,3,4,5,1]),
-          np.array([3,4,5,1,2]),
-          np.array([4,5,1,2,3]),
-          np.array([5,1,2,3,6]),]
+    xs = [np.array([1,2,3,4,5], float),
+          np.array([2,3,4,5,1], float),
+          np.array([3,4,5,1,2], float),
+          np.array([4,5,1,2,3], float),
+          np.array([5,1,2,3,6], float),]
     fs = [x**2 - 1 for x in xs]
 
     def _check_secant(self, jac_cls, npoints=1, **kw):
@@ -125,6 +125,51 @@ class TestSecant(TestCase):
         #
         # .. [Ey] V. Eyert, J. Comp. Phys., 124, 271 (1996).
         self._check_secant(nonlin.Anderson, M=3, w0=0, npoints=3)
+
+class TestLinear(TestCase):
+    """Solve a linear equation"""
+
+    def _check(self, jac, N, maxiter, complex=False, **kw):
+        np.random.seed(123)
+
+        A = np.random.randn(N, N)
+        if complex:
+            A = A + 1j*np.random.randn(N, N)
+        b = np.random.randn(N)
+        if complex:
+            b = b + 1j*np.random.randn(N)
+
+        def func(x):
+            return dot(A, x) - b
+
+        sol = nonlin.nonlin_solve(func, b*0, jac, maxiter=maxiter,
+                                  f_tol=1e-6, line_search=None, verbose=1)
+        assert np.allclose(dot(A, sol), b, atol=1e-6)
+
+    def test_broyden1(self):
+        # Broyden methods solve linear systems exactly in 2*N steps
+
+        # XXX: Numerical error spoils BroydenFirst results for larger N.
+        #      Something should be fixed. What?
+
+        self._check(nonlin.BroydenFirst, 10, 21, False)
+        self._check(nonlin.BroydenFirst, 10, 21, True)
+
+    def test_broyden2(self):
+        # Broyden methods solve linear systems exactly in 2*N steps
+        self._check(nonlin.BroydenSecond, 20, 41, False)
+        self._check(nonlin.BroydenSecond, 20, 41, True)
+
+    def test_anderson(self):
+        # Anderson is rather similar to Broyden, if given enough storage space
+        self._check(nonlin.Anderson(M=50), 20, 29, False)
+        self._check(nonlin.Anderson(M=50), 20, 29, True)
+
+    def test_krylov(self):
+        # Krylov methods solve linear systems exactly in N inner steps
+        self._check(nonlin.KrylovJacobian, 20, 2, False, inner_m=10)
+        self._check(nonlin.KrylovJacobian, 20, 2, True, inner_m=10)
+
 
 class TestJacobianDotSolve(object):
     """Check that solve/dot methods in Jacobian approximations are consistent"""
