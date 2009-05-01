@@ -228,7 +228,7 @@ class TestNonlinOldTests(TestCase):
     """
 
     def test_broyden1(self):
-        x= nonlin.broyden1(F,F.xin,iter=11,alpha=1)
+        x= nonlin.broyden1(F,F.xin,iter=11,alpha=1,line_search=None)
         assert nonlin.norm(x)<1e-9
         assert nonlin.norm(F(x))<1e-9
 
