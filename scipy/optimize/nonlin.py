@@ -147,7 +147,7 @@ def maxnorm(x):
 def _as_inexact(x):
     """Return `x` as an array, of either floats or complex floats"""
     x = asarray(x)
-    if not isinstance(x.dtype.type, np.inexact):
+    if not np.issubdtype(x.dtype, np.inexact):
         return asarray(x, dtype=np.float_)
     return x
 
@@ -246,8 +246,9 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
                                      x_tol=x_tol, x_rtol=x_rtol,
                                      iter=iter, norm=tol_norm)
 
+    x0 = _as_inexact(x0)
     func = lambda z: _as_inexact(F(_array_like(z, x0))).flatten()
-    x = _as_inexact(x0).flatten()
+    x = x0.flatten()
 
     dx = np.inf
     Fx = func(x)
