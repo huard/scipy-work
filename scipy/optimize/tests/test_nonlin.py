@@ -44,6 +44,7 @@ F4_powell.xin = [-1, -2]
 F4_powell.KNOWN_BAD = [nonlin.anderson, nonlin.linearmixing,
                        nonlin.excitingmixing]
 
+
 class TestNonlin(object):
     """
     Check the Broyden methods for a few test problems.

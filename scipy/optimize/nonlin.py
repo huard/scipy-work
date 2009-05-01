@@ -218,7 +218,7 @@ def _set_doc(obj):
 
 def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
                  maxiter=None, f_tol=None, f_rtol=None, x_tol=None, x_rtol=None,
-                 tol_norm=None, line_search='wolfe', callback=None):
+                 tol_norm=None, line_search='armijo', callback=None):
     """
     Find a root of a function, using given Jacobian approximation.
 
@@ -281,13 +281,14 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
 
         if line_search == 'wolfe':
             # Line search for Wolfe conditions for an objective function
-            s = line_search_wolfe(func, x, dx)
-            x += s*dx
-            Fx = func(x)
-            Fx_norm_new = norm(Fx)
+            s, x, Fx, Fx_norm_new = line_search_wolfe(func, x, dx, Fx, Fx_norm)
         elif line_search == 'armijo':
             s, x, Fx, Fx_norm_new = line_search_armijo(func, x, dx, Fx, Fx_norm)
-        elif line_search is None:
+
+        if line_search is None or s == 0.0:
+            # If no line search, or if line search failed, take the full step
+            # and hope for the best.
+            s = 1.0
             x += dx
             Fx = func(x)
             Fx_norm_new = norm(Fx)
@@ -354,10 +355,16 @@ def line_search_armijo(F, x, dx, Fx=None, Fx_norm=None, alpha=1e-4):
 
     """
 
+    # XXX: polynomial model?
+
     if Fx is None:
         Fx = F(x)
     if Fx_norm is None:
         Fx_norm = norm(Fx)
+
+    x0 = x
+    Fx0 = Fx
+    Fx_norm0 = Fx_norm
 
     s = 1.0
     for k in xrange(6):
@@ -372,11 +379,17 @@ def line_search_armijo(F, x, dx, Fx=None, Fx_norm=None, alpha=1e-4):
     else:
         # Give up; it's probably not a descent direction.
         # Could fail here, but just return the shortest step
-        pass
+        s, x_new, Fx_new, Fx_norm_new = 0., x0, Fx0, Fx_norm0
 
     return s, x_new, Fx_new, Fx_norm_new
 
-def line_search_wolfe(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
+def _safe_norm(v):
+    if np.isinf(v).any():
+        return np.inf
+    return norm(v)
+
+def line_search_wolfe(F, x0, dx, Fx=None, Fx_norm=None,
+                      c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     """
     Perform a line search at `x` to direction `dx` looking for a sufficient
     decrease in the norm of ``F(x + s dx)``.
@@ -394,58 +407,63 @@ def line_search_wolfe(F, x, dx, c1=1e-4, c2=0.9, maxfev=15, eps=1e-8):
     relative step size of `eps`.
 
     """
-    
+
+    x = x0
+    x0_norm = norm(x)
     dx_norm = norm(dx)
-    x_norm = norm(x)
     dx = dx / dx_norm
+
     if dx_norm == 0:
         raise ValueError('Invalid search direction')
 
-    def func(s):
-        v = F(x + s*dx)
-        if np.isinf(v).any():
-            return np.inf
-        return norm(v)
-
     def grad(s, f0):
-        ds = (abs(s) + x_norm) * eps
-        return (func(s + ds) - f0) / ds
+        ds = (abs(s) + x0_norm) * eps
+        return (_safe_norm(F(x0 + (s+ds)*dx)) - f0) / ds
 
     xtol = 1e-2
     stpmin = 1e-2 * dx_norm
     stpmax = 50. * dx_norm
     stp = dx_norm
 
-    f = func(0.)
+    if Fx is None:
+        Fx = F(x)
+    if Fx_norm is None:
+        Fx_norm = _safe_norm(Fx)
+
+    f = Fx_norm
     g = grad(0., f)
 
     isave = np.zeros(2, dtype=np.intc)
     dsave = np.zeros(13, dtype=np.float_)
     task = 'START'
 
-    best_stp = stp
-    best_stp_f = f
+    best_stp = (0., x, Fx, Fx_norm)
+    last_stp = 0.
 
     for k in xrange(maxfev//2):
-        stp, f, g, task = minpack2.dcsrch(stp, f, g, c1, c2, xtol, task,
-                                          stpmin, stpmax, isave, dsave)
-        if task[:2] == 'FG':
-            f = func(stp)
-            g = grad(stp, f)
-        else:
-            break
-        if f < best_stp_f:
-            best_stp = stp
-            best_stp_f = f
-    else:
-        stp = best_stp
-        task = 'WARNING'
+        stp, f2, g2, task = minpack2.dcsrch(stp, f, g, c1, c2, xtol, task,
+                                            stpmin, stpmax, isave, dsave)
 
-    if task[:5] == 'ERROR':
-        stp = best_stp
+        if stp != last_stp:
+            x = x0 + stp*dx
+            Fx = F(x)
+            f = Fx_norm = _safe_norm(Fx)
+            g = grad(stp, f)
+            last_stp = stp
+
+        if Fx_norm < best_stp[-1]:
+            best_stp = (stp, x, Fx, Fx_norm)
+
+        if task[:2] != 'FG':
+            break
+    else:
+        task = 'ITER'
+
+    if task[:5] == 'ERROR' or task == 'ITER':
+        stp, x, Fx, Fx_norm = best_stp
 
     stp /= dx_norm
-    return stp
+    return stp, x, Fx, Fx_norm
 
 class TerminationCondition(object):
     """
@@ -1471,7 +1489,7 @@ def _nonlin_wrapper(name, jac):
     wrapper = """
 def %(name)s(F, xin, iter=None %(kw)s, verbose=False, maxiter=None, 
              f_tol=None, f_rtol=None, x_tol=None, x_rtol=None, 
-             tol_norm=None, line_search='wolfe', callback=None, **kw):
+             tol_norm=None, line_search='armijo', callback=None, **kw):
     jac = %(jac)s(%(kwkw)s **kw)
     return nonlin_solve(F, xin, jac, iter, verbose, maxiter,
                         f_tol, f_rtol, x_tol, x_rtol, tol_norm, line_search,
