@@ -853,7 +853,23 @@ class BroydenFirst(GenericBroyden):
 
     Notes
     -----
-    This implementation of the Broyden method stores the inverse Jacobian.
+    This algorithm implements the inverse Jacobian Quasi-Newton update
+
+    .. math:: H_+ = H + (dx - H df) dx^\dagger H / ( dx^\dagger H df)
+
+    which corresponds to Broyden's first Jacobian update
+
+    .. math:: J_+ = J + (df - J dx) dx^\dagger / dx^\dagger dx
+
+
+    References
+    ----------
+    .. [vR] B.A. van der Rotten, PhD thesis,
+       \"A limited memory Broyden method to solve high-dimensional
+       systems of nonlinear equations\". Mathematisch Instituut,
+       Universiteit Leiden, The Netherlands (2003).
+
+       http://www.math.leidenuniv.nl/scripties/Rotten.pdf
 
     """
 
@@ -907,7 +923,7 @@ class BroydenFirst(GenericBroyden):
 
         v = self.Gm.rmatvec(dx)
         c = dx - self.Gm.matvec(df)
-        d = v  / vdot(df, v)
+        d = v / vdot(df, v)
 
         self.Gm.append(c, d)
 
@@ -926,15 +942,29 @@ class BroydenSecond(BroydenFirst):
 
     Notes
     -----
-    This implementation of the Broyden method stores the inverse Jacobian.
+    This algorithm implements the inverse Jacobian Quasi-Newton update
+
+    .. math:: H_+ = H + (dx - H df) df^\dagger / ( df^\dagger df)
+
+    corresponding to Broyden's second method.
+
+    References
+    ----------
+    .. [vR] B.A. van der Rotten, PhD thesis,
+       \"A limited memory Broyden method to solve high-dimensional
+       systems of nonlinear equations\". Mathematisch Instituut,
+       Universiteit Leiden, The Netherlands (2003).
+
+       http://www.math.leidenuniv.nl/scripties/Rotten.pdf
 
     """
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self._reduce() # reduce first to preserve secant condition
 
+        v = df
         c = dx - self.Gm.matvec(df)
-        d = df / df_norm**2
+        d = v / df_norm**2
         self.Gm.append(c, d)
 
 
