@@ -569,7 +569,7 @@ def asjacobian(J):
                     return m*v
                 else:
                     raise ValueError("Unknown matrix type")
-            def rsolve(self, v):
+            def rsolve(self, v, tol=0):
                 m = J(self.x)
                 if isinstance(m, np.ndarray):
                     return solve(m.conj().T, v)
@@ -697,7 +697,7 @@ class LowRankMatrix(object):
             return solve(self.collapsed, v)
         return LowRankMatrix._solve(v, self.alpha, self.cs, self.ds)
 
-    def rsolve(self, v, tol):
+    def rsolve(self, v, tol=0):
         """Evaluate w = M^-H v"""
         if self.collapsed is not None:
             return solve(self.collapsed.T.conj(), v)
@@ -895,7 +895,7 @@ class BroydenFirst(GenericBroyden):
     def matvec(self, f):
         return self.Gm.solve(f)
 
-    def rsolve(self, f):
+    def rsolve(self, f, tol=0):
         return self.Gm.rmatvec(f)
 
     def rmatvec(self, f):
@@ -1104,7 +1104,7 @@ class Vackar(GenericBroyden):
     def matvec(self, f):
         return -f * self.d
 
-    def rsolve(self, f):
+    def rsolve(self, f, tol=0):
         return -f / self.d.conj()
 
     def rmatvec(self, f):
@@ -1144,7 +1144,7 @@ class LinearMixing(GenericBroyden):
     def matvec(self, f):
         return -f/self.alpha
 
-    def rsolve(self, f):
+    def rsolve(self, f, tol=0):
         return -f*np.conj(self.alpha)
 
     def rmatvec(self, f):
@@ -1195,7 +1195,7 @@ class ExcitingMixing(GenericBroyden):
     def matvec(self, f):
         return -f/self.beta
 
-    def rsolve(self, f, tol):
+    def rsolve(self, f, tol=0):
         return -f*self.beta.conj()
 
     def rmatvec(self, f):

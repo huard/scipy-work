@@ -167,28 +167,28 @@ class TestJacobianDotSolve(object):
                     Gv = jac.solve(v)
                     Gv2 = np.linalg.solve(Jd, v)
                     assert_close(Gv, Gv2, 'solve vs array')
-                if hasattr(jac, 'solveH'):
-                    Gv = jac.solveH(v)
+                if hasattr(jac, 'rsolve'):
+                    Gv = jac.rsolve(v)
                     Gv2 = np.linalg.solve(Jd.T.conj(), v)
-                    assert_close(Gv, Gv2, 'solveH vs array')
-                if hasattr(jac, 'dot'):
-                    Jv = jac.dot(v)
+                    assert_close(Gv, Gv2, 'rsolve vs array')
+                if hasattr(jac, 'matvec'):
+                    Jv = jac.matvec(v)
                     Jv2 = np.dot(Jd, v)
                     assert_close(Jv, Jv2, 'dot vs array')
-                if hasattr(jac, 'dotH'):
-                    Jv = jac.dotH(v)
+                if hasattr(jac, 'rmatvec'):
+                    Jv = jac.rmatvec(v)
                     Jv2 = np.dot(Jd.T.conj(), v)
-                    assert_close(Jv, Jv2, 'dotH vs array')
+                    assert_close(Jv, Jv2, 'rmatvec vs array')
 
-            if hasattr(jac, 'dot') and hasattr(jac, 'solve'):
-                Jv = jac.dot(v)
-                Jv2 = jac.solve(jac.dot(Jv))
+            if hasattr(jac, 'matvec') and hasattr(jac, 'solve'):
+                Jv = jac.matvec(v)
+                Jv2 = jac.solve(jac.matvec(Jv))
                 assert_close(Jv, Jv2, 'dot vs solve')
 
-            if hasattr(jac, 'dotH') and hasattr(jac, 'solveH'):
-                Jv = jac.dotH(v)
-                Jv2 = jac.dotH(jac.solveH(Jv))
-                assert_close(Jv, Jv2, 'dotH vs solveH')
+            if hasattr(jac, 'rmatvec') and hasattr(jac, 'rsolve'):
+                Jv = jac.rmatvec(v)
+                Jv2 = jac.rmatvec(jac.rsolve(Jv))
+                assert_close(Jv, Jv2, 'rmatvec vs rsolve')
 
             x = rand(N)
             jac.update(x, self._func(x))
