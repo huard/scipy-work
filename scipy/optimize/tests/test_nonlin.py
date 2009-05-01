@@ -15,12 +15,10 @@ OTHER = [nonlin.anderson, nonlin.vackar, nonlin.linearmixing,
          nonlin.excitingmixing]
 
 def F(x):
-    def p3(y):
-        return float(y.T*y)*y
     x = np.asmatrix(x).T
-    d=matrix(diag([3,2,1.5,1,0.5]))
-    c=0.01
-    f=-d*x-c*p3(x)
+    d = matrix(diag([3,2,1.5,1,0.5]))
+    c = 0.01
+    f = -d*x - c*float(x.T*x)*x
     return f
 F.xin = [1,1,1,1,1]
 F.KNOWN_BAD = []
@@ -228,7 +226,7 @@ class TestNonlinOldTests(TestCase):
     """
 
     def test_broyden1(self):
-        x= nonlin.broyden1(F,F.xin,iter=11,alpha=1,line_search=None)
+        x= nonlin.broyden1(F,F.xin,iter=12,alpha=1)
         assert nonlin.norm(x)<1e-9
         assert nonlin.norm(F(x))<1e-9
 
