@@ -721,7 +721,7 @@ class LowRankMatrix(object):
 
         Gm = self.alpha*np.identity(self.n, dtype=self.dtype)
         for c, d in zip(self.cs, self.ds):
-            Gm += c[:,None]*d[None,:]
+            Gm += c[:,None]*d[None,:].conj()
         return Gm
 
     def collapse(self):
@@ -905,13 +905,11 @@ class BroydenFirst(GenericBroyden):
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self._reduce() # reduce first to preserve secant condition
 
-        s = self.Gm.rmatvec(dx)
-        y = self.Gm.matvec(df)
-        c = (dx - y) / vdot(dx, y)
-        d = s
-        self.Gm.append(c, d)
+        v = self.Gm.rmatvec(dx)
+        c = dx - self.Gm.matvec(df)
+        d = v  / vdot(df, v)
 
-        # self.Gm += (dx - y)[:,None] * s[None,:] / vdot(dx, y)
+        self.Gm.append(c, d)
 
 
 class BroydenSecond(BroydenFirst):
@@ -935,10 +933,10 @@ class BroydenSecond(BroydenFirst):
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         self._reduce() # reduce first to preserve secant condition
 
-        c = (dx - self.Gm.matvec(df)) / df_norm
-        d = df / df_norm
+        c = dx - self.Gm.matvec(df)
+        d = df / df_norm**2
         self.Gm.append(c, d)
-        #self.Gm += (dx - dot(self.Gm, df))[:,None] * df[None,:]/df_norm**2
+
 
 #------------------------------------------------------------------------------
 # Broyden-like (restricted memory)
