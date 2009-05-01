@@ -934,15 +934,15 @@ _doc_parts['broyden_params'] = """
         that gives the name of the method and values for additional parameters.
 
         Methods available:
-            - ``none``: no reduction, allow infinite rank.
             - ``restart``: drop all matrix columns. Has no extra parameters.
             - ``simple``: drop oldest matrix column. Has no extra parameters.
             - ``svd``: keep only the most significant SVD components.
               Extra parameters:
                   - ``to_retain`: number of SVD components to retain when
                     rank reduction is done. Default is ``max_rank - 2``.
-    max_rank : int or tuple, optional
+    max_rank : int, optional
         Maximum rank for the Broyden matrix.
+        Default is infinity (ie., no rank reduction).
     """.strip()
 
 class BroydenFirst(GenericBroyden):
@@ -963,7 +963,7 @@ class BroydenFirst(GenericBroyden):
 
     """
 
-    def __init__(self, alpha=None, reduction_method='none', max_rank=None):
+    def __init__(self, alpha=None, reduction_method='restart', max_rank=None):
         GenericBroyden.__init__(self)
         self.alpha = alpha
         self.Gm = None
@@ -985,8 +985,6 @@ class BroydenFirst(GenericBroyden):
             self._reduce = lambda: self.Gm.simple_reduce(*reduce_params)
         elif reduction_method == 'restart':
             self._reduce = lambda: self.Gm.restart_reduce(*reduce_params)
-        elif reduction_method in ('none', None):
-            self._reduce = lambda: None
         else:
             raise ValueError("Unknown rank reduction method '%s'" %
                              reduction_method)
