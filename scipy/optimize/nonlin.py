@@ -717,7 +717,6 @@ class GenericBroyden(Jacobian):
         if hasattr(self, 'alpha') and self.alpha is None:
             # autoscale the initial Jacobian parameter
             self.alpha = 0.5*max(norm(x0), 1) / norm(f0)
-            print "autoscale", self.alpha
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         raise NotImplementedError
@@ -1016,7 +1015,9 @@ class BroydenFirst(GenericBroyden):
         c = (dx - y) / vdot(dx, y)
         d = s
         self.Gm.append(c, d)
-        #self.Gm += (dx - y)[:,None] * s[None,:] / dot(dx, y)
+
+        # self.Gm += (dx - y)[:,None] * s[None,:] / vdot(dx, y)
+
 
 class BroydenSecond(BroydenFirst):
     """
@@ -1342,7 +1343,7 @@ class KrylovJacobian(Jacobian):
         Note that you can use also inverse Jacobians as (adaptive)
         preconditioners. For example,
 
-        >>> jac = Broyden1()
+        >>> jac = BroydenFirst()
         >>> kjac = KrylovJacobian(inner_M=jac.inverse).
     inner_tol, inner_maxiter, ...
         Parameters to pass on to the \"inner\" Krylov solver.
