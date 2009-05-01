@@ -41,8 +41,8 @@ def F4_powell(x):
     A = 1e4
     return [A*x[0]*x[1] - 1, np.exp(-x[0]) + np.exp(-x[1]) - (1 + 1/A)]
 F4_powell.xin = [-1, -2]
-F4_powell.KNOWN_BAD = [nonlin.anderson, nonlin.linearmixing,
-                       nonlin.excitingmixing]
+F4_powell.KNOWN_BAD = [nonlin.linearmixing, nonlin.excitingmixing,
+                       nonlin.vackar]
 
 
 class TestNonlin(object):
@@ -55,7 +55,7 @@ class TestNonlin(object):
     """
 
     def _check_func(self, f, func, f_tol=1e-2):
-        x = func(f, f.xin, f_tol=f_tol, maxiter=100, verbose=1)
+        x = func(f, f.xin, f_tol=f_tol, maxiter=200, verbose=1)
         assert np.absolute(f(x)).max() < f_tol
 
     @dec.knownfailureif(True)
