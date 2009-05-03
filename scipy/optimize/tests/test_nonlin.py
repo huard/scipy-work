@@ -10,9 +10,15 @@ from numpy import matrix, diag, dot
 from numpy.linalg import inv
 import numpy as np
 
-BROYDEN = [nonlin.broyden1, nonlin.broyden2, nonlin.newton_krylov]
-OTHER = [nonlin.anderson, nonlin.vackar, nonlin.linearmixing,
-         nonlin.excitingmixing]
+SOLVERS = [nonlin.anderson, nonlin.vackar, nonlin.linearmixing,
+           nonlin.excitingmixing, nonlin.broyden1, nonlin.broyden2,
+           nonlin.newton_krylov]
+MUST_WORK = [nonlin.anderson, nonlin.broyden1, nonlin.broyden2,
+             nonlin.newton_krylov]
+
+#-------------------------------------------------------------------------------
+# Test problems
+#-------------------------------------------------------------------------------
 
 def F(x):
     x = np.asmatrix(x).T
@@ -42,13 +48,33 @@ F4_powell.xin = [-1, -2]
 F4_powell.KNOWN_BAD = [nonlin.linearmixing, nonlin.excitingmixing,
                        nonlin.vackar]
 
+from test_minpack import TestFSolve as F5_class
+F5_object = F5_class()
+def F5(x):
+    return F5_object.pressure_network(x, 4, np.array([.5, .5, .5, .5]))
+F5.xin = [2., 0, 2, 0]
+F5.KNOWN_BAD = [nonlin.excitingmixing, nonlin.linearmixing, nonlin.vackar]
+
+def F6(x):
+    x1, x2 = x
+    J0 = np.array([[ -4.256     ,  14.7       ],
+                [  0.8394989 ,   0.59964207]])
+    v = np.array([(x1 + 3) * (x2**5 - 7) + 3*6,
+                  np.sin(x2 * np.exp(x1) - 1)])
+    return -np.linalg.solve(J0, v)
+F6.xin = [-0.5, 1.4]
+F6.KNOWN_BAD = [nonlin.excitingmixing, nonlin.linearmixing, nonlin.vackar]
+
+#-------------------------------------------------------------------------------
+# Tests
+#-------------------------------------------------------------------------------
 
 class TestNonlin(object):
     """
     Check the Broyden methods for a few test problems.
 
-    broyden1, broyden2, and broyden3 must succeed for all functions.
-    Some of the others don't -- tests in KNOWN_BAD are skipped.
+    broyden1, broyden2, and newton_krylov must succeed for
+    all functions. Some of the others don't -- tests in KNOWN_BAD are skipped.
 
     """
 
@@ -61,10 +87,11 @@ class TestNonlin(object):
         pass
 
     def test_problem(self):
-        for f in [F, F2, F3, F4_powell]:
-            for func in BROYDEN + OTHER:
-                if func in f.KNOWN_BAD and func not in BROYDEN:
-                    #yield self._check_func_fail, f, func
+        for f in [F, F2, F3, F4_powell, F5, F6]:
+            for func in SOLVERS:
+                if func in f.KNOWN_BAD:
+                    if func in MUST_WORK:
+                        yield self._check_func_fail, f, func
                     continue
                 yield self._check_func, f, func
 
@@ -127,7 +154,8 @@ class TestSecant(TestCase):
         self._check_secant(nonlin.Anderson, M=3, w0=0, npoints=3)
 
 class TestLinear(TestCase):
-    """Solve a linear equation"""
+    """Solve a linear equation;
+    some methods find the exact solution in a finite number of steps"""
 
     def _check(self, jac, N, maxiter, complex=False, **kw):
         np.random.seed(123)
