@@ -78,7 +78,7 @@ class TestOptimize(TestCase):
         assert np.allclose(self.trace[2:4],
                            [[0, -0.5, 0.5],
                             [0, -5.05700028e-01, 4.95985862e-01]],
-                           atol=1e-14, rtol=1e-6), self.trace[2:4]
+                           atol=1e-14, rtol=1e-7), self.trace[2:4]
 
 
     def test_bfgs(self):
@@ -103,7 +103,7 @@ class TestOptimize(TestCase):
         assert np.allclose(self.trace[6:8],
                            [[0, -5.25060743e-01,   4.87748473e-01],
                             [0, -5.24885582e-01,   4.87530347e-01]],
-                           atol=1e-14, rtol=1e-6), self.trace[6:8]
+                           atol=1e-14, rtol=1e-7), self.trace[6:8]
 
 
     def test_powell(self):
@@ -128,7 +128,7 @@ class TestOptimize(TestCase):
         assert np.allclose(self.trace[76:78],
                            [[0.97871377, -0.47265162,  0.48016719],
                             [1.6311896 , -0.55402605,  0.49168629]],
-                           atol=1e-14, rtol=1e-6), self.trace[76:78]
+                           atol=1e-14, rtol=1e-7), self.trace[76:78]
 
     def test_neldermead(self):
         """ Nelder-Mead simplex algorithm
@@ -152,7 +152,7 @@ class TestOptimize(TestCase):
         assert np.allclose(self.trace[76:78],
                            [[0.1928968 , -0.62780447,  0.35166118],
                             [0.19572515, -0.63648426,  0.35838135]],
-                           atol=1e-14, rtol=1e-6), self.trace[76:78]
+                           atol=1e-14, rtol=1e-7), self.trace[76:78]
 
     def test_ncg(self):
         """ line-search Newton conjugate gradient optimization routine
@@ -177,7 +177,7 @@ class TestOptimize(TestCase):
         assert np.allclose(self.trace[3:5],
                            [[-4.35700753e-07, -5.24869435e-01, 4.87527480e-01],
                             [-4.35700753e-07, -5.24869401e-01, 4.87527774e-01]],
-                           atol=1e-14, rtol=1e-6), self.trace[3:5]
+                           atol=1e-14, rtol=1e-7), self.trace[3:5]
 
 
     def test_l_bfgs_b(self):
@@ -202,7 +202,7 @@ class TestOptimize(TestCase):
         assert np.allclose(self.trace[3:5],
                            [[0.        , -0.52489628,  0.48753042],
                             [0.        , -0.52489628,  0.48753042]],
-                           atol=1e-14, rtol=1e-6), self.trace[3:5]
+                           atol=1e-14, rtol=1e-7), self.trace[3:5]
 
     def test_brent(self):
         """ brent algorithm
