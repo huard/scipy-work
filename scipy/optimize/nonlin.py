@@ -119,7 +119,7 @@ The solution can be found using the `newton_krylov` solver:
 
 import sys
 import numpy as np
-from scipy.linalg import norm, solve, inv, qr, svd, lstsq
+from scipy.linalg import norm, solve, inv, qr, svd, lstsq, LinAlgError
 from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
 import scipy.sparse
@@ -907,6 +907,10 @@ class BroydenFirst(GenericBroyden):
         return inv(self.Gm)
 
     def solve(self, f, tol=0):
+        r = self.Gm.matvec(f)
+        if not np.isfinite(r).all():
+            # singular; reset the Jacobian approximation
+            self.setup(self.last_x, self.last_f, self.func)
         return self.Gm.matvec(f)
 
     def matvec(self, f):
@@ -1040,7 +1044,14 @@ class Anderson(GenericBroyden):
         df_f = np.empty(n, dtype=f.dtype)
         for k in xrange(n):
             df_f[k] = vdot(self.df[k], f)
-        gamma = solve(self.a, df_f)
+
+        try:
+            gamma = solve(self.a, df_f)
+        except LinAlgError:
+            # singular; reset the Jacobian approximation
+            del self.dx[:]
+            del self.df[:]
+            return dx
 
         for m in xrange(n):
             dx += gamma[m]*(self.dx[m] + self.alpha*self.df[m])
