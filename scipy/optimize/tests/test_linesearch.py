@@ -1,4 +1,6 @@
-# XXX: add tests for lineasearc.py routines
+"""
+Tests for line search routines
+"""
 
 from numpy.testing import *
 import scipy.optimize.linesearch as ls
