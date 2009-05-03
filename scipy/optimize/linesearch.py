@@ -129,6 +129,8 @@ def scalar_search_wolfe1(phi, derphi, phi0=None, old_phi0=None, derphi0=None,
 
     if old_phi0 is not None:
         alpha1 = min(1.0, 1.01*2*(phi0 - old_phi0)/derphi0)
+        if alpha1 < 0:
+            alpha1 = 1.0
     else:
         alpha1 = 1.0
 
@@ -142,7 +144,6 @@ def scalar_search_wolfe1(phi, derphi, phi0=None, old_phi0=None, derphi0=None,
         stp, phi1, derphi1, task = minpack2.dcsrch(alpha1, phi1, derphi1,
                                                    c1, c2, xtol, task,
                                                    amin, amax, isave, dsave)
-
         if task[:2] == 'FG':
             alpha1 = stp
             phi1 = phi(stp)
@@ -237,7 +238,7 @@ def line_search_wolfe2(f, myfprime, xk, pk, gfk, old_fval, old_old_fval,
         # again in the outer loop.
         derphi_star = gval[0]
 
-    return alpha_star, fc, gc, phi_star, old_fval, derphi_star
+    return alpha_star, fc[0], gc[0], phi_star, old_fval, derphi_star
 
 
 def scalar_search_wolfe2(phi, derphi=None, phi0=None,
@@ -293,7 +294,13 @@ def scalar_search_wolfe2(phi, derphi=None, phi0=None,
         derphi0 = derphi(0., *args)
 
     alpha0 = 0
-    alpha1 = min(1.0, 1.01*2*(phi0 - old_phi0)/derphi0)
+    if old_phi0 is not None:
+        alpha1 = min(1.0, 1.01*2*(phi0 - old_phi0)/derphi0)
+    else:
+        alpha1 = 1.0
+
+    if alpha1 < 0:
+        alpha1 = 1.0
 
     if alpha1 == 0:
         # This shouldn't happen. Perhaps the increment has slipped below
@@ -372,18 +379,18 @@ def _cubicmin(a,fa,fpa,b,fb,c,fc):
     dc = c-a
     if (db == 0) or (dc == 0) or (b==c): return None
     denom = (db*dc)**2 * (db-dc)
-    d1 = empty((2,2))
+    d1 = np.empty((2,2))
     d1[0,0] = dc**2
     d1[0,1] = -db**2
     d1[1,0] = -dc**3
     d1[1,1] = db**3
-    [A,B] = np.dot(d1,asarray([fb-fa-C*db,fc-fa-C*dc]).flatten())
+    [A,B] = np.dot(d1, np.asarray([fb-fa-C*db,fc-fa-C*dc]).flatten())
     A /= denom
     B /= denom
     radical = B*B-3*A*C
     if radical < 0:  return None
     if (A == 0): return None
-    xmin = a + (-B + sqrt(radical))/(3*A)
+    xmin = a + (-B + np.sqrt(radical))/(3*A)
     return xmin
 
 
@@ -509,8 +516,7 @@ def line_search_BFGS(f, xk, pk, gfk, old_fval, args=(), c1=1e-4, alpha0=1):
                            alpha0=alpha0)
     return r[0], r[1], 0, r[2]
 
-def scalar_search_armijo(phi, phi0, derphi0, c1=1e-4, alpha0=1,
-                         amin=1e-19):
+def scalar_search_armijo(phi, phi0, derphi0, c1=1e-4, alpha0=1, amin=0):
     """Minimize over alpha, the function ``phi(s)``.
 
     Uses the interpolation algorithm (Armijo backtracking) as suggested by
@@ -561,3 +567,4 @@ def scalar_search_armijo(phi, phi0, derphi0, c1=1e-4, alpha0=1,
 
     # Failed to find a suitable step length
     return None, phi_a1
+
