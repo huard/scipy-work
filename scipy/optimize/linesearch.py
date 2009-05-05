@@ -89,6 +89,8 @@ def scalar_search_wolfe1(phi, derphi, phi0=None, old_phi0=None, derphi0=None,
     """
     Scalar function search for alpha that satisfies strong Wolfe conditions
 
+    stp > 0 is assumed to be a descent direction.
+
     Parameters
     ----------
     phi : callable phi(s, *args)
@@ -246,6 +248,8 @@ def scalar_search_wolfe2(phi, derphi=None, phi0=None,
                          c1=1e-4, c2=0.9, amax=50):
     """Find alpha that satisfies strong Wolfe conditions.
 
+    alpha > 0 is assumed to be a descent direction.
+
     Parameters
     ----------
     phi : callable f(x,*args)
@@ -325,9 +329,9 @@ def scalar_search_wolfe2(phi, derphi=None, phi0=None,
         if (phi_a1 > phi0 + c1*alpha1*derphi0) or \
            ((phi_a1 >= phi_a0) and (i > 1)):
             alpha_star, phi_star, derphi_star = \
-                        zoom(alpha0, alpha1, phi_a0,
-                             phi_a1, derphi_a0, phi, derphi,
-                             phi0, derphi0, c1, c2)
+                        _zoom(alpha0, alpha1, phi_a0,
+                              phi_a1, derphi_a0, phi, derphi,
+                              phi0, derphi0, c1, c2)
             break
 
         derphi_a1 = derphi(alpha1)
@@ -339,9 +343,9 @@ def scalar_search_wolfe2(phi, derphi=None, phi0=None,
 
         if (derphi_a1 >= 0):
             alpha_star, phi_star, derphi_star = \
-                        zoom(alpha1, alpha0, phi_a1,
-                             phi_a0, derphi_a1, phi, derphi,
-                             phi0, derphi0, c1, c2)
+                        _zoom(alpha1, alpha0, phi_a1,
+                              phi_a0, derphi_a1, phi, derphi,
+                              phi0, derphi0, c1, c2)
             break
 
         alpha2 = 2 * alpha1   # increase by factor of two on each iteration
@@ -366,11 +370,13 @@ line_search = line_search_wolfe2
 
 
 def _cubicmin(a,fa,fpa,b,fb,c,fc):
-    # finds the minimizer for a cubic polynomial that goes through the
-    #  points (a,fa), (b,fb), and (c,fc) with derivative at a of fpa.
-    #
-    # if no minimizer can be found return None
-    #
+    """
+    Finds the minimizer for a cubic polynomial that goes through the
+    points (a,fa), (b,fb), and (c,fc) with derivative at a of fpa.
+    
+    If no minimizer can be found return None
+    
+    """
     # f(x) = A *(x-a)^3 + B*(x-a)^2 + C*(x-a) + D
 
     C = fpa
@@ -395,8 +401,11 @@ def _cubicmin(a,fa,fpa,b,fb,c,fc):
 
 
 def _quadmin(a,fa,fpa,b,fb):
-    # finds the minimizer for a quadratic polynomial that goes through
-    #  the points (a,fa), (b,fb) with derivative at a of fpa
+    """
+    Finds the minimizer for a quadratic polynomial that goes through
+    the points (a,fa), (b,fb) with derivative at a of fpa,
+
+    """
     # f(x) = B*(x-a)^2 + C*(x-a) + D
     D = fa
     C = fpa
@@ -407,8 +416,12 @@ def _quadmin(a,fa,fpa,b,fb):
     xmin = a  - C / (2.0*B)
     return xmin
 
-def zoom(a_lo, a_hi, phi_lo, phi_hi, derphi_lo,
-         phi, derphi, phi0, derphi0, c1, c2):
+def _zoom(a_lo, a_hi, phi_lo, phi_hi, derphi_lo,
+          phi, derphi, phi0, derphi0, c1, c2):
+    """
+    Part of the optimization algorithm in `scalar_search_wolfe2`.
+    """
+
     maxiter = 10
     i = 0
     delta1 = 0.2  # cubic interpolant check
@@ -416,21 +429,24 @@ def zoom(a_lo, a_hi, phi_lo, phi_hi, derphi_lo,
     phi_rec = phi0
     a_rec = 0
     while 1:
-        # interpolate to find a trial step length between a_lo and a_hi
-        # Need to choose interpolation here.  Use cubic interpolation and then if the
-        #  result is within delta * dalpha or outside of the interval bounded by a_lo or a_hi
-        #  then use quadratic interpolation, if the result is still too close, then use bisection
+        # interpolate to find a trial step length between a_lo and
+        # a_hi Need to choose interpolation here.  Use cubic
+        # interpolation and then if the result is within delta *
+        # dalpha or outside of the interval bounded by a_lo or a_hi
+        # then use quadratic interpolation, if the result is still too
+        # close, then use bisection
 
         dalpha = a_hi-a_lo;
         if dalpha < 0: a,b = a_hi,a_lo
         else: a,b = a_lo, a_hi
 
         # minimizer of cubic interpolant
-        #    (uses phi_lo, derphi_lo, phi_hi, and the most recent value of phi)
-        #      if the result is too close to the end points (or out of the interval)
-        #         then use quadratic interpolation with phi_lo, derphi_lo and phi_hi
-        #      if the result is stil too close to the end points (or out of the interval)
-        #         then use bisection
+        # (uses phi_lo, derphi_lo, phi_hi, and the most recent value of phi)
+        #
+        # if the result is too close to the end points (or out of the
+        # interval) then use quadratic interpolation with phi_lo,
+        # derphi_lo and phi_hi if the result is stil too close to the
+        # end points (or out of the interval) then use bisection
 
         if (i > 0):
             cchk = delta1*dalpha
@@ -440,9 +456,6 @@ def zoom(a_lo, a_hi, phi_lo, phi_hi, derphi_lo,
             a_j = _quadmin(a_lo, phi_lo, derphi_lo, a_hi, phi_hi)
             if (a_j is None) or (a_j > b-qchk) or (a_j < a+qchk):
                 a_j = a_lo + 0.5*dalpha
-#                print "Using bisection."
-#            else: print "Using quadratic."
-#        else: print "Using cubic."
 
         # Check new value of a_j
 
@@ -489,7 +502,11 @@ def line_search_armijo(f, xk, pk, gfk, old_fval, args=(), c1=1e-4, alpha0=1):
     Uses the interpolation algorithm (Armijo backtracking) as suggested by
     Wright and Nocedal in 'Numerical Optimization', 1999, pg. 56-57
 
-    :Returns: (alpha, f_count, f_val_at_alpha)
+    Returns
+    -------
+    alpha
+    f_count
+    f_val_at_alpha
 
     """
     xk = np.atleast_1d(xk)
@@ -517,12 +534,17 @@ def line_search_BFGS(f, xk, pk, gfk, old_fval, args=(), c1=1e-4, alpha0=1):
     return r[0], r[1], 0, r[2]
 
 def scalar_search_armijo(phi, phi0, derphi0, c1=1e-4, alpha0=1, amin=0):
-    """Minimize over alpha, the function ``phi(s)``.
+    """Minimize over alpha, the function ``phi(alpha)``.
 
     Uses the interpolation algorithm (Armijo backtracking) as suggested by
     Wright and Nocedal in 'Numerical Optimization', 1999, pg. 56-57
 
-    :Returns: alpha, phi1
+    alpha > 0 is assumed to be a descent direction.
+
+    Returns
+    -------
+    alpha
+    phi1
 
     """
     phi_a0 = phi(alpha0)
@@ -542,7 +564,7 @@ def scalar_search_armijo(phi, phi0, derphi0, c1=1e-4, alpha0=1, amin=0):
     # assume that the value of alpha is not too small and satisfies the second
     # condition.
 
-    while alpha1 > amin:       # we are assuming pk is a descent direction
+    while alpha1 > amin:       # we are assuming alpha>0 is a descent direction
         factor = alpha0**2 * alpha1**2 * (alpha1-alpha0)
         a = alpha0**2 * (phi_a1 - phi0 - derphi0*alpha1) - \
             alpha1**2 * (phi_a0 - phi0 - derphi0*alpha0)
