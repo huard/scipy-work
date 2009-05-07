@@ -33,17 +33,6 @@ Simple iterations:
    linearmixing
    vackar
 
- 
-References
-----------
-
-.. [BS] P. N. Brown and Y. Saad. ''Globally convergent techniques in
-   nonlinear Newton-Krylov algorithms''
-
-   ftp://ftp.cs.umn.edu/dept/users/saad/reports/PDF/RIACS-89-57.pdf
-
-.. 
-
 
 Examples
 ========
@@ -52,12 +41,15 @@ Small problem
 -------------
 
 >>> def F(x):
-...    '''Should converge to x=[0,0,0,0,0]'''
-...    d = [3,2,1.5,1,0.5]
-...    c = 0.01
-...    return -d * x - c*x**3
+...    return np.cos(x) + x - [1, 2, 3, 4]
 >>> import scipy.optimize
->>> x = scipy.optimize.broyden2(F, [1,1,1,1,1])
+>>> x = scipy.optimize.broyden2(F, [1,1,1,1], f_tol=1e-14)
+>>> x
+array([ -1.72856955e-16,   2.98826893e+00,   3.79438861e+00,
+         4.35232971e+00])
+>>> np.cos(x) + x
+array([ 1.,  2.,  3.,  4.])
+
 
 Large problem
 -------------
@@ -231,8 +223,25 @@ def nonlin_solve(F, x0, jacobian='krylov', iter=None, verbose=False,
     ----------
     %(params_basic)s
     jacobian : Jacobian
-        A Jacobian approximation.
+        A Jacobian approximation: `Jacobian` object or something that
+        `asjacobian` can transform to one. Alternatively, a string specifying
+        which of the builtin Jacobian approximations to use:
+
+            krylov, broyden1, broyden2, anderson
+            vackar, linearmixing, excitingmixing
+
     %(params_extra)s
+
+    See Also
+    --------
+    asjacobian, Jacobian
+
+    Notes
+    -----
+    This algorithm implements the inexact Newton method, with
+    backtracking or full line searches. Several Jacobian
+    approximations are available, including Krylov and Quasi-Newton
+    methods.
 
     References
     ----------
@@ -980,11 +989,9 @@ class Anderson(GenericBroyden):
     """
     Find a root of a function, using (extended) Anderson mixing.
 
-    The jacobian is formed by for a 'best' solution in the space
+    The Jacobian is formed by for a 'best' solution in the space
     spanned by last `M` vectors. As a result, only a MxM matrix
-    inversion and MxN multiplication is required. [Ey]_
-
-    .. [Ey] V. Eyert, J. Comp. Phys., 124, 271 (1996).
+    inversions and MxN multiplications are required. [Ey]_
 
     Parameters
     ----------
@@ -997,6 +1004,10 @@ class Anderson(GenericBroyden):
         Regularization parameter for numerical stability.
         Compared to unity, good values of the order of 0.01.
     %(params_extra)s
+
+    References
+    ----------
+    .. [Ey] V. Eyert, J. Comp. Phys., 124, 271 (1996).
 
     """
 
@@ -1350,6 +1361,8 @@ class KrylovJacobian(Jacobian):
             # the Jacobian changes a lot in the nonlinear step
             #
             # XXX: some trust-region inspired ideas might be more efficient...
+            #      See eg. Brown & Saad. But needs to be implemented separately
+            #      since it's not an inexact Newton method.
             self.method_kw.setdefault('store_outer_Av', False)
 
         for key, value in kw.items():
