@@ -103,7 +103,10 @@ class TestSecant(TestCase):
           np.array([2,3,4,5,1], float),
           np.array([3,4,5,1,2], float),
           np.array([4,5,1,2,3], float),
-          np.array([5,1,2,3,6], float),]
+          np.array([9,1,9,1,3], float),
+          np.array([0,1,9,1,3], float),
+          np.array([5,5,7,1,1], float),
+          np.array([1,2,7,5,1], float),]
     fs = [x**2 - 1 for x in xs]
 
     def _check_secant(self, jac_cls, npoints=1, **kw):
