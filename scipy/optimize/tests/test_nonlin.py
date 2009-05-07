@@ -133,19 +133,34 @@ class TestSecant(TestCase):
     def test_broyden2(self):
         self._check_secant(nonlin.BroydenSecond)
 
-    def test_broyden1_sherman_morrison(self):
-        # Check that BroydenFirst is as expected for the 1st iteration
+    def test_broyden1_update(self):
+        # Check that BroydenFirst update works as for a dense matrix
         jac = nonlin.BroydenFirst(alpha=0.1)
         jac.setup(self.xs[0], self.fs[0], None)
-        jac.update(self.xs[1], self.fs[1])
 
-        df = self.fs[1] - self.fs[0]
-        dx = self.xs[1] - self.xs[0]
-        j0 = -1./0.1 * np.eye(5)
-        j0 += (df - dot(j0, dx))[:,None] * dx[None,:] / dot(dx, dx)
+        B = np.identity(5) * (-1/0.1)
 
-        assert np.allclose(inv(j0), jac.Gm)
+        for last_j, (x, f) in enumerate(zip(self.xs[1:], self.fs[1:])):
+            df = f - self.fs[last_j]
+            dx = x - self.xs[last_j]
+            B += (df - dot(B, dx))[:,None] * dx[None,:] / dot(dx, dx)
+            jac.update(x, f)
+            assert np.allclose(jac.todense(), B, rtol=1e-10, atol=1e-13)
 
+    def test_broyden2_update(self):
+        # Check that BroydenSecond update works as for a dense matrix
+        jac = nonlin.BroydenSecond(alpha=0.1)
+        jac.setup(self.xs[0], self.fs[0], None)
+
+        H = np.identity(5) * (-0.1)
+
+        for last_j, (x, f) in enumerate(zip(self.xs[1:], self.fs[1:])):
+            df = f - self.fs[last_j]
+            dx = x - self.xs[last_j]
+            H += (dx - dot(H, df))[:,None] * df[None,:] / dot(df, df)
+            jac.update(x, f)
+            assert np.allclose(jac.todense(), inv(H), rtol=1e-10, atol=1e-13)
+            
     def test_anderson(self):
         # Anderson mixing (with w0=0) satisfies secant conditions
         # for the last M iterates, see [Ey]_
