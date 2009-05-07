@@ -194,22 +194,18 @@ class TestLinear(TestCase):
 
     def test_broyden1(self):
         # Broyden methods solve linear systems exactly in 2*N steps
-
-        # XXX: Numerical error spoils BroydenFirst results for larger N.
-        #      Something should be fixed. What?
-
-        self._check(nonlin.BroydenFirst, 10, 21, False)
-        self._check(nonlin.BroydenFirst, 10, 21, True)
-
+        self._check(nonlin.BroydenFirst(alpha=1.0), 20, 41, False)
+        self._check(nonlin.BroydenFirst(alpha=1.0), 20, 41, True)
+        
     def test_broyden2(self):
         # Broyden methods solve linear systems exactly in 2*N steps
-        self._check(nonlin.BroydenSecond, 20, 41, False)
-        self._check(nonlin.BroydenSecond, 20, 41, True)
+        self._check(nonlin.BroydenSecond(alpha=1.0), 20, 41, False)
+        self._check(nonlin.BroydenSecond(alpha=1.0), 20, 41, True)
 
     def test_anderson(self):
         # Anderson is rather similar to Broyden, if given enough storage space
-        self._check(nonlin.Anderson(M=50), 20, 29, False)
-        self._check(nonlin.Anderson(M=50), 20, 29, True)
+        self._check(nonlin.Anderson(M=50, alpha=1.0), 20, 29, False)
+        self._check(nonlin.Anderson(M=50, alpha=1.0), 20, 29, True)
 
     def test_krylov(self):
         # Krylov methods solve linear systems exactly in N inner steps
